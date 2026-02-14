@@ -52,7 +52,7 @@ Arborism/
 
 ## Tool Paths (Windows)
 
-All commands in this file use **PowerShell syntax**. The Bash tool on Windows already runs in PowerShell — **never wrap commands in `powershell -Command "..."`** as this triggers a Windows "Open with" dialog due to a 0-byte stub at `C:\Windows\System32\powershell`. Run PowerShell commands directly.
+All commands in this file use **PowerShell syntax**. When calling from the Bash tool, wrap in `powershell -Command "..."`.
 
 ```
 PYTHON    = C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe
