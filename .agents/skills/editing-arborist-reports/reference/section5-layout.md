@@ -1,6 +1,6 @@
 # Section 5 (Conclusion) Layout
 
-Read this when editing Section 5 of a report. For overview, see `CLAUDE.md`.
+Load this when editing Section 5 of a report.
 
 ## Structure Order
 
