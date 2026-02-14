@@ -1,1 +1,24 @@
+# Windows reserved names
 nul
+
+# Binary work files — these live on disk but don't belong in git
+*.docx
+*.xlsx
+*.ai
+*.pdf
+*.emf
+
+# Entire .work directories (unpacked OOXML, edit scripts, changelogs)
+**/.work/
+
+# Local IDE/tool settings
+.claude/
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Site visit photos and media (too large for git)
+**/Visit/
+**/media/

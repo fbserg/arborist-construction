@@ -14,16 +14,25 @@ This repository contains arborist consulting project files. Claude instances wor
 
 The **docx skill** (`/docx`) is installed and provides the workflows below for all Word document operations.
 
+## Version Control
+
+This repo is pushed to GitHub. **Only guidelines and documentation are tracked in git.** All binary/work files live on disk but are gitignored (see `.gitignore`).
+
+**Tracked:** `CLAUDE.md`, `guideline.md`, `work/sample-reports.md`, `.gitignore`
+**Ignored:** `*.docx`, `*.xlsx`, `*.ai`, `*.pdf`, `*.emf`, `**/.work/`, `.claude/`, `**/Visit/`, `**/media/`
+
 ## Project Folder Structure
 
 ```
 Arborism/
-├── CLAUDE.md                         # Technical workflow (this file)
-├── guideline.md                      # Content rules for reports
+├── CLAUDE.md                         # Technical workflow (this file)  [tracked]
+├── guideline.md                      # Content rules for reports  [tracked]
+├── .gitignore                        # Keeps work files out of git  [tracked]
 ├── work/                             # Staging: one active template at a time
-│   └── [Address] Report.docx         # Template placed here by user
+│   ├── [Address] Report.docx         # Template placed here by user  [ignored]
+│   └── sample-reports.md             # Reference documentation  [tracked]
 ├── [Address, City, Province, Country, Postal Code]/
-│   ├── .work/                        # Working directory for document editing
+│   ├── .work/                        # Working directory for document editing  [ignored]
 │   │   ├── unpacked/                 # Unpacked OOXML for current document
 │   │   ├── changelog.md              # Log of edits made to documents
 │   │   └── [Document Name].md        # Readable markdown copy
@@ -34,9 +43,9 @@ Arborism/
 │   │   └── Client/                   # Deliverables sent to client
 │   │       ├── [Address] Report.pdf
 │   │       └── [Address] Plan.pdf
-│   ├── [Address] Report.docx         # Current working report (master)
-│   ├── [Address] Plan.ai             # Current working plan (Illustrator)
-│   └── [Address] inventory.xlsx      # Tree inventory spreadsheet
+│   ├── [Address] Report.docx         # Current working report (master)  [ignored]
+│   ├── [Address] Plan.ai             # Current working plan (Illustrator)  [ignored]
+│   └── [Address] inventory.xlsx      # Tree inventory spreadsheet  [ignored]
 ```
 
 `[project]` in paths below refers to the address folder (e.g., `123 Fake Street, Toronto, ON, Canada, M5V 1A1`).
