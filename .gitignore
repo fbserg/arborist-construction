@@ -8,8 +8,9 @@ nul
 *.pdf
 *.emf
 
-# Entire .work directories (unpacked OOXML, edit scripts, changelogs)
-**/.work/
+# Working and output directories
+temp/
+client/
 
 # Local IDE/tool settings
 .claude/
@@ -18,7 +19,3 @@ nul
 Thumbs.db
 desktop.ini
 .DS_Store
-
-# Site visit photos and media (too large for git)
-**/Visit/
-**/media/
