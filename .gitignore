@@ -16,6 +16,9 @@ complete/
 # Local IDE/tool settings
 .claude/
 
+# Python
+__pycache__/
+
 # OS junk
 Thumbs.db
 desktop.ini
