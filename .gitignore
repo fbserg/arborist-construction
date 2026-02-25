@@ -9,8 +9,9 @@ nul
 *.emf
 
 # Working and output directories
-temp/
-client/
+new/
+work/
+complete/
 
 # Local IDE/tool settings
 .claude/

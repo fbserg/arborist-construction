@@ -107,6 +107,7 @@ Before assigning an Impact Rating, the LLM must assess the species' tolerance to
 
 ### 6. Logic for Recommendations (New Projects)
 
+<!-- TODO: Steps 1 and 4 are missing from this list — restore when content is available -->
 2.  **Calculate Encroachment:** TPZ - Distance to work. Example: 4.0m - 2.0m = 2.0m encroachment.
 3.  **Check Tolerance:** Oak = **Poor Tolerance**.
 5.  **Select Profile:** Garage = Profile C (Deep excavation).
@@ -114,4 +115,5 @@ Before assigning an Impact Rating, the LLM must assess the species' tolerance to
 
 ### 7. Post-Removal/Conclusion Notes
 
+<!-- TODO: Section 7 content is incomplete — specific municipal/ownership notes missing -->
 The LLM should append specific notes based on the Municipality or Ownership:

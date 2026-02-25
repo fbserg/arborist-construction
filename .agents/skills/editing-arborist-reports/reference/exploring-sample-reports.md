@@ -10,8 +10,8 @@ Load this when you need to check formatting or structure against a completed sam
 
 ## Quick Content Review (Pandoc)
 
-```powershell
-& $PANDOC "C:\Projects\Arborism\work\[Sample] Report.docx" -t markdown
+```bash
+pandoc "$PROJECT_ROOT/work/[Sample] Report.docx" -t markdown
 ```
 
 Sufficient for understanding content structure, section order, narrative content, and table headers.
@@ -20,10 +20,10 @@ Sufficient for understanding content structure, section order, narrative content
 
 Only unpack when you need exact cell styling, border widths, font sizes, or shading values:
 
-```powershell
-& $PY $UNPACK "C:\Projects\Arborism\work\[Sample] Report.docx" "C:\Projects\Arborism\work\.sample-temp"
+```bash
+cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/work/[Sample] Report.docx" "$PROJECT_ROOT/work/.sample-temp"
 # Grep for relevant portions rather than reading the full file
-Remove-Item -Recurse -Force "C:\Projects\Arborism\work\.sample-temp"
+rm -rf "$PROJECT_ROOT/work/.sample-temp"   # always clean up
 ```
 
 ## Tips

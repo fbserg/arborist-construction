@@ -5,54 +5,100 @@ Detailed reference for making tracked-change edits to `.docx` files. Load this b
 ## Contents
 
 - Edit script template
-- Editor API
+- Helper functions
 - Critical: manual `<w:ins>` wrapping
 - XML helper patterns
 - Replacement pattern
 - Getting nodes
-- Tracked change XML patterns
-- Saving and validation
-- UTF-8 note
+- Saving
 
 ## Edit Script Template
 
 ```python
-import sys, os
+import sys, os, xml.dom.minidom as minidom
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-SKILL = r"C:\Users\User\.claude\plugins\cache\anthropic-agent-skills\document-skills\69c0b1a06741\skills\docx"
-sys.path.insert(0, SKILL)
-from scripts.document import Document
 
-PROJECT = r"[project]"
-doc = Document(PROJECT + r"\unpacked\temp", author="Arborist", rsid="SUGGESTED_RSID")
-editor = doc["word/document.xml"]
+PROJECT = "/home/serg/projects/arborist-construction/[client]/.work"
+DOC_PATH = PROJECT + "/unpacked/temp/word/document.xml"
+
+with open(DOC_PATH, 'r', encoding='utf-8') as f:
+    content = f.read()
+
+dom = minidom.parseString(content.encode('utf-8'))
 ```
 
-## Editor API
+## Helper Functions
 
-```
-editor.get_node(tag, contains)   — find node by tag name and text content
-editor.replace_node(node, xml)   — replace node with new XML
-editor.insert_after(node, xml)   — insert XML after element
-editor.insert_before(node, xml)  — insert XML before element
-editor.append_to(node, xml)      — append XML as child of element
+```python
+# ─── Helpers ────────────────────────────────────────────────────────────
 
-All methods accept multi-element XML strings.
-Auto-inject RSID attributes to <w:p> and <w:r> elements.
-Auto-populate w:id/w:author/w:date on <w:ins>/<w:del> — but does NOT create them.
+def get_text(node):
+    """Concatenated text from all w:t and w:delText children."""
+    parts = []
+    for tag in ('w:t', 'w:delText'):
+        for child in node.getElementsByTagName(tag):
+            if child.firstChild:
+                parts.append(child.firstChild.data)
+    return ''.join(parts)
+
+def find_run_in_line_range(content, dom, text, line_lo, line_hi):
+    """Find w:r whose text matches AND whose occurrence falls within line range.
+    Uses two-pass: line-scan to get occurrence index, then picks that DOM node."""
+    lines = content.splitlines()
+    occ_lines = [i+1 for i, ln in enumerate(lines) if f'<w:t>{text}</w:t>' in ln]
+    target = [ln for ln in occ_lines if line_lo <= ln <= line_hi]
+    if len(target) != 1:
+        raise ValueError(f"Expected 1 match in {line_lo}-{line_hi}, got {target}")
+    idx = occ_lines.index(target[0])
+    runs = [r for r in dom.getElementsByTagName('w:r') if get_text(r) == text]
+    return runs[idx]
+
+def find_para_by_para_id(dom, para_id):
+    """Find w:p with matching w14:paraId attribute."""
+    for p in dom.getElementsByTagName('w:p'):
+        if p.getAttribute('w14:paraId') == para_id:
+            return p
+    raise ValueError(f"Paragraph with paraId={para_id} not found")
+
+def insert_xml_after(dom, ref_node, xml_string):
+    """Insert parsed XML nodes immediately after ref_node."""
+    parent = ref_node.parentNode
+    wrapper = minidom.parseString(
+        f'<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        f' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+        f' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'{xml_string}</root>'
+    )
+    ref_sibling = ref_node.nextSibling
+    for node in wrapper.documentElement.childNodes:
+        parent.insertBefore(dom.importNode(node, True), ref_sibling)
+
+def replace_node_with_xml(dom, old_node, xml_string):
+    """Replace old_node in its parent with the parsed XML nodes."""
+    parent = old_node.parentNode
+    wrapper = minidom.parseString(
+        f'<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'{xml_string}</root>'
+    )
+    ref = old_node.nextSibling
+    for node in wrapper.documentElement.childNodes:
+        parent.insertBefore(dom.importNode(node, True), ref)
+    parent.removeChild(old_node)
 ```
 
 ## Critical: `<w:ins>` Wrapping is Manual
 
-The API populates attributes on `<w:ins>`/`<w:del>` elements but does **not** auto-create them. All new content must be wrapped in `<w:ins>`:
+The helpers do **not** auto-create `<w:ins>`/`<w:del>` elements. All new content must be wrapped explicitly:
 ```xml
 <!-- WRONG — will not show as tracked change -->
 <w:r><w:rPr>...</w:rPr><w:t>new text</w:t></w:r>
 
 <!-- CORRECT — will show as tracked insertion -->
-<w:ins><w:r><w:rPr>...</w:rPr><w:t>new text</w:t></w:r></w:ins>
+<w:ins w:id="30" w:author="Arborist" w:date="2026-02-24T00:00:00Z">
+  <w:r><w:rPr>...</w:rPr><w:t>new text</w:t></w:r>
+</w:ins>
 ```
 
 ## XML Helper Patterns
@@ -62,7 +108,7 @@ The API populates attributes on `<w:ins>`/`<w:del>` elements but does **not** au
 def ins_para(text, rpr):
     return f'''<w:p>
   <w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr>
-  <w:ins><w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r></w:ins>
+  <w:ins w:id="30" w:author="Arborist" w:date="2026-02-24T00:00:00Z"><w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r></w:ins>
 </w:p>'''
 
 # Standard 4-side border (for table cells)
@@ -78,104 +124,47 @@ BORDERS = '''<w:tcBorders>
 
 Use `<w:del>` + `<w:ins>`:
 ```python
-node = editor.get_node(tag="w:r", contains="text to find")
-rpr = tags[0].toxml() if (tags := node.getElementsByTagName("w:rPr")) else ""
-replacement = f'<w:del><w:r>{rpr}<w:delText>old</w:delText></w:r></w:del><w:ins><w:r>{rpr}<w:t>new</w:t></w:r></w:ins>'
-editor.replace_node(node, replacement)
+node = find_run_in_line_range(content, dom, "Injury", 8350, 8420)
+rpr_nodes = node.getElementsByTagName('w:rPr')
+rpr = rpr_nodes[0].toxml() if rpr_nodes else ''
 
-doc.save()
+replace_node_with_xml(dom, node,
+    f'<w:del w:id="29" w:author="Arborist" w:date="2026-02-24T00:00:00Z">'
+    f'<w:r>{rpr}<w:delText>Injury</w:delText></w:r></w:del>'
+    f'<w:ins w:id="30" w:author="Arborist" w:date="2026-02-24T00:00:00Z">'
+    f'<w:r>{rpr}<w:t>Removal</w:t></w:r></w:ins>'
+)
 ```
 
 **Minimal edits principle** — only mark text that actually changes:
 ```python
 # BAD - Replaces entire sentence
-'<w:del><w:r><w:delText>The term is 30 days.</w:delText></w:r></w:del><w:ins><w:r><w:t>The term is 60 days.</w:t></w:r></w:ins>'
+'<w:del w:id="1" w:author="Arborist" w:date="2026-02-24T00:00:00Z"><w:r><w:delText>The term is 30 days.</w:delText></w:r></w:del><w:ins w:id="2" w:author="Arborist" w:date="2026-02-24T00:00:00Z"><w:r><w:t>The term is 60 days.</w:t></w:r></w:ins>'
 
 # GOOD - Only marks what changed
-'<w:r w:rsidR="00AB12CD"><w:t>The term is </w:t></w:r><w:del><w:r><w:delText>30</w:delText></w:r></w:del><w:ins><w:r><w:t>60</w:t></w:r></w:ins><w:r w:rsidR="00AB12CD"><w:t> days.</w:t></w:r>'
+'<w:r w:rsidR="00AB12CD"><w:t>The term is </w:t></w:r><w:del w:id="1" w:author="Arborist" w:date="2026-02-24T00:00:00Z"><w:r><w:delText>30</w:delText></w:r></w:del><w:ins w:id="2" w:author="Arborist" w:date="2026-02-24T00:00:00Z"><w:r><w:t>60</w:t></w:r></w:ins><w:r w:rsidR="00AB12CD"><w:t> days.</w:t></w:r>'
 ```
 
 ## Getting Nodes
 
 ```python
-# By text content
-node = editor.get_node(tag="w:p", contains="specific text")
+# By text + line range (disambiguate repeated text):
+node = find_run_in_line_range(content, dom, "Injury", 8350, 8420)
 
-# By line range
-para = editor.get_node(tag="w:p", line_number=range(100, 150))
+# By paraId (most stable — use Grep/Read to find paraId in document.xml):
+para = find_para_by_para_id(dom, '0213C74E')
 
-# By exact line number
-para = editor.get_node(tag="w:p", line_number=42)
-
-# By attributes
-node = editor.get_node(tag="w:del", attrs={"w:id": "1"})
-
-# Combine filters (disambiguate repeated text)
-node = editor.get_node(tag="w:r", contains="Section", line_number=range(2400, 2500))
+# By unique text (if text only appears once):
+runs = [r for r in dom.getElementsByTagName('w:r') if get_text(r) == 'unique text']
 ```
 
-## Tracked Change XML Patterns
-
-**Text Insertion:**
-```xml
-<w:ins>
-  <w:r><w:t>inserted text</w:t></w:r>
-</w:ins>
-```
-
-**Text Deletion:**
-```xml
-<w:del>
-  <w:r><w:delText>deleted text</w:delText></w:r>
-</w:del>
-```
-
-**Deleting another author's insertion (nested structure required):**
-```xml
-<w:ins w:author="Jane Smith" w:id="16">
-  <w:del w:author="Arborist" w:id="40">
-    <w:r><w:delText>monthly</w:delText></w:r>
-  </w:del>
-</w:ins>
-<w:ins w:author="Arborist" w:id="41">
-  <w:r><w:t>weekly</w:t></w:r>
-</w:ins>
-```
-
-**Delete entire run:**
-```python
-node = editor.get_node(tag="w:r", contains="text to delete")
-editor.suggest_deletion(node)
-```
-
-**Delete entire paragraph:**
-```python
-para = editor.get_node(tag="w:p", contains="paragraph to delete")
-editor.suggest_deletion(para)
-```
-
-**New tracked paragraph insertion:**
-```python
-from scripts.document import DocxXMLEditor
-target_para = editor.get_node(tag="w:p", contains="existing text")
-pPr = tags[0].toxml() if (tags := target_para.getElementsByTagName("w:pPr")) else ""
-new_item = f'<w:p>{pPr}<w:r><w:t>New item</w:t></w:r></w:p>'
-tracked_para = DocxXMLEditor.suggest_paragraph(new_item)
-editor.insert_after(target_para, tracked_para)
-```
-
-## Saving and Validation
+## Saving
 
 ```python
-doc.save()  # Validates by default, raises error if validation fails
-doc.save(validate=False)  # Skip validation (debugging only)
+# Save
+with open(DOC_PATH, 'wb') as f:
+    f.write(dom.toxml(encoding='utf-8'))
+print("Saved.")
 ```
 
-The validator checks that document text matches the original after reverting tracked changes. Rules:
-- Never modify text inside another author's `<w:ins>` or `<w:del>` tags
-- Always use nested deletions to remove another author's insertions
-- Every edit must be properly tracked
-
-## UTF-8 Note
-
-UTF-8 encoding is handled in the script header. Do not rely on `$env:PYTHONIOENCODING`.
+`dom.toxml(encoding='utf-8')` returns `bytes` — open the output file in `'wb'` mode.
