@@ -15,82 +15,44 @@ Detailed reference for making tracked-change edits to `.docx` files. Load this b
 ## Edit Script Template
 
 ```python
-import sys, os, xml.dom.minidom as minidom
-os.environ["PYTHONIOENCODING"] = "utf-8"
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+import sys
+sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
+from edit_helpers import EditSession, find_run_in_line_range, find_para_by_para_id, insert_xml_after, extract_rpr, RPR_NORMAL, RPR_BOLD
 
-PROJECT = "/home/serg/projects/arborist-construction/[client]/.work"
-DOC_PATH = PROJECT + "/unpacked/temp/word/document.xml"
+# EditSession handles encoding, document loading, and auto-incrementing change IDs.
+# Check [project]/.work/changelog.md for last used ID and pass start_id accordingly.
+s = EditSession("work/[Client]/.work", "2026-02-25", "Arborist", start_id=1)
 
-with open(DOC_PATH, 'r', encoding='utf-8') as f:
-    content = f.read()
+# Find and replace text (auto del+ins, auto rPr extraction):
+node = s.find_run("old text", 4455, 4465)
+s.replace_text(node, "old text", "new text")
 
-dom = minidom.parseString(content.encode('utf-8'))
+# Replace with explicit rPr:
+s.replace_text(node, "old text", "new text", RPR_BOLD)
+
+# Insert paragraphs after a reference node:
+para = s.find_para("60180DE4")
+insert_xml_after(s.dom, para,
+    s.ins_para("Paragraph 1 text.") +
+    s.ins_para("Paragraph 2 text.")
+)
+
+# Generate del/ins XML directly (for complex cases):
+xml = s.del_run("old") + s.ins_run("new", RPR_BOLD)
+
+s.save()  # Prints IDs used range
 ```
 
-## Helper Functions
+**Standalone helpers** are also importable for scripts that need DOM access without EditSession:
+`from edit_helpers import load_document, get_text, find_run_in_line_range, find_para_by_para_id, insert_xml_after, replace_node_with_xml`
 
-```python
-# ─── Helpers ────────────────────────────────────────────────────────────
+**Full module:** `.agents/skills/editing-arborist-reports/scripts/edit_helpers.py`
 
-def get_text(node):
-    """Concatenated text from all w:t and w:delText children."""
-    parts = []
-    for tag in ('w:t', 'w:delText'):
-        for child in node.getElementsByTagName(tag):
-            if child.firstChild:
-                parts.append(child.firstChild.data)
-    return ''.join(parts)
+## Critical: `<w:ins>` Wrapping
 
-def find_run_in_line_range(content, dom, text, line_lo, line_hi):
-    """Find w:r whose text matches AND whose occurrence falls within line range.
-    Uses two-pass: line-scan to get occurrence index, then picks that DOM node."""
-    lines = content.splitlines()
-    occ_lines = [i+1 for i, ln in enumerate(lines) if f'<w:t>{text}</w:t>' in ln]
-    target = [ln for ln in occ_lines if line_lo <= ln <= line_hi]
-    if len(target) != 1:
-        raise ValueError(f"Expected 1 match in {line_lo}-{line_hi}, got {target}")
-    idx = occ_lines.index(target[0])
-    runs = [r for r in dom.getElementsByTagName('w:r') if get_text(r) == text]
-    return runs[idx]
+**EditSession methods** (`del_run`, `ins_run`, `replace_text`, `ins_para`) auto-create `<w:ins>`/`<w:del>` wrappers with correct IDs.
 
-def find_para_by_para_id(dom, para_id):
-    """Find w:p with matching w14:paraId attribute."""
-    for p in dom.getElementsByTagName('w:p'):
-        if p.getAttribute('w14:paraId') == para_id:
-            return p
-    raise ValueError(f"Paragraph with paraId={para_id} not found")
-
-def insert_xml_after(dom, ref_node, xml_string):
-    """Insert parsed XML nodes immediately after ref_node."""
-    parent = ref_node.parentNode
-    wrapper = minidom.parseString(
-        f'<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
-        f' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
-        f' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        f'{xml_string}</root>'
-    )
-    ref_sibling = ref_node.nextSibling
-    for node in wrapper.documentElement.childNodes:
-        parent.insertBefore(dom.importNode(node, True), ref_sibling)
-
-def replace_node_with_xml(dom, old_node, xml_string):
-    """Replace old_node in its parent with the parsed XML nodes."""
-    parent = old_node.parentNode
-    wrapper = minidom.parseString(
-        f'<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f'{xml_string}</root>'
-    )
-    ref = old_node.nextSibling
-    for node in wrapper.documentElement.childNodes:
-        parent.insertBefore(dom.importNode(node, True), ref)
-    parent.removeChild(old_node)
-```
-
-## Critical: `<w:ins>` Wrapping is Manual
-
-The helpers do **not** auto-create `<w:ins>`/`<w:del>` elements. All new content must be wrapped explicitly:
+**Manual XML** (for complex cases like table cells) still requires explicit wrapping:
 ```xml
 <!-- WRONG — will not show as tracked change -->
 <w:r><w:rPr>...</w:rPr><w:t>new text</w:t></w:r>

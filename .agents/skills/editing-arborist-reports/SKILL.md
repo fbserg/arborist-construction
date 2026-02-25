@@ -63,7 +63,7 @@ Ask what the user needs:
 mkdir -p "$PROJECT_ROOT/work/[Client]/.work"
 cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/new/[Address] Report.docx" "[project]/.work/unpacked/temp"
 ```
-Note the suggested RSID.
+Record the suggested RSID — use it as `w:rsidR` on all new runs in the edit script.
 
 **Step 2:** Read content rules. Load `$PROJECT_ROOT/guideline.md` for impact profiles, species tolerance, narrative templates, TPZ calculations, and post-removal notes.
 
@@ -86,9 +86,15 @@ pandoc "path/to/document.docx" -t markdown     # or -o "[project]/[Name].md" to 
 ```bash
 cd "$SKILL_OFFICE" && python3 unpack.py "path/to/document.docx" "[project]/.work/unpacked/temp"
 ```
-Note the suggested RSID.
+Record the suggested RSID — use it as `w:rsidR` on all new runs in the edit script.
 
-**Step 2 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`.
+**Step 1b — Extract tree data** (if not already done for this project):
+```bash
+python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/extract_trees.py" "path/to/document.docx"
+```
+Outputs `[project]/.work/tree_data.json` — read this instead of re-reading the full document for tree species, DBH, TPZ, condition, etc.
+
+**Step 2 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
 
 **Step 3 — Run:**
 ```bash
@@ -106,6 +112,7 @@ python3 "[project]/.work/edit_script.py"
 - **Batch changes**: Group 3-10 related edits per script.
 - **Grep first**: Always check `word/document.xml` line numbers before editing.
 - **Section 5 edits**: Load `reference/section5-layout.md` before editing the conclusion section.
+- **Consistency check**: After completing scoped edits, scan the Summary section and other sections for contradictions with the new content before packing (e.g., source-of-impact wording must match across Summary, impact table, and narrative).
 
 ## Verification and Logging
 
@@ -120,13 +127,23 @@ pandoc --track-changes=all "$PROJECT_ROOT/complete/[Address] Report.docx" -t pla
     | grep -i "expected change"
 ```
 
-**Step 6 — Log** edits in `[project]/.work/changelog.md`.
+**Step 6 — Log** edits in `[project]/.work/changelog.md`. Required fields:
+- **Date** and **description** of changes
+- **Change IDs** used (range, e.g. 1–16)
+- **RSID** used for the session
+- **Author** and **date stamp** on tracked changes
 
 **Step 7 — Promote:**
 ```bash
 rm -rf "[project]/.work/unpacked/current"
 mv "[project]/.work/unpacked/temp" "[project]/.work/unpacked/current"
 ```
+
+**Step 8 — Review** (optional but recommended):
+- Cross-section consistency: do Summary, impact table, and narrative all agree?
+- Were all SKILL.md steps followed (RSID captured, references loaded, guideline loaded for narrative)?
+- Any workarounds used that indicate tooling gaps? Note in memory.
+- Changelog updated with all required fields?
 
 ## Reset Working Directory
 

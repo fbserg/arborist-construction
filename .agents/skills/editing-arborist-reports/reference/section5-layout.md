@@ -1,6 +1,6 @@
 # Section 5 (Conclusion) Layout
 
-Load this when editing Section 5 of a report.
+Load this when editing Section 5 of a report. **Skipping this reference risks misplacing content or breaking structural order.**
 
 ## Structure Order
 
@@ -23,9 +23,11 @@ Do not reorder or skip structural elements:
 
 Injury narratives go **after** the injury detail table, **before** the RSE boilerplate. They do NOT go after the RSE boilerplate or in the empty paragraphs between RSE and Removals.
 
+**Note:** Some templates omit the mini data table for Tree 1 (the first injured tree). If the mini data table is absent, create it as a tracked insertion (`<w:ins>`) before the injury detail table.
+
 ## Standard XML Anchors
 
-Use with `editor.get_node` to locate insertion points:
+Grep these strings in `word/document.xml`, then use `find_run_in_line_range()` or direct DOM search to locate insertion points:
 
 | Anchor text | Locates |
 |---|---|
