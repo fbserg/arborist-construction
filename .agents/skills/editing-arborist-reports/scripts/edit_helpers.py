@@ -141,13 +141,14 @@ class EditSession:
         s.save()
     """
 
-    def __init__(self, work_path, date, author="Arborist", start_id=1):
+    def __init__(self, work_path, date, author="Arborist", start_id=None):
         """
         Args:
             work_path: Path to [project]/.work directory.
             date: Date string, e.g. "2026-02-25" (T00:00:00Z appended automatically).
             author: Tracked change author name.
-            start_id: First change ID to use (check changelog for last used).
+            start_id: First change ID to use. Defaults to None = auto-detect from DOM
+                      (max existing w:del/w:ins id + 1). Pass an explicit int to override.
         """
         if not os.path.isabs(work_path):
             work_path = os.path.join("/home/serg/projects/arborist-construction", work_path)
@@ -157,12 +158,28 @@ class EditSession:
         # Normalize date — accept "2026-02-25" or full ISO
         self.date = date if 'T' in date else f"{date}T00:00:00Z"
         self.author = author
-        self._next_id = start_id
 
         # Load document
         with open(self._doc_path, 'r', encoding='utf-8') as f:
             self.content = f.read()
         self.dom = minidom.parseString(self.content.encode('utf-8'))
+
+        # Auto-detect start_id from existing tracked changes if not specified
+        if start_id is None:
+            max_id = 0
+            for tag in ('w:del', 'w:ins'):
+                for elem in self.dom.getElementsByTagName(tag):
+                    id_val = elem.getAttribute('w:id')
+                    if id_val:
+                        try:
+                            max_id = max(max_id, int(id_val))
+                        except ValueError:
+                            pass
+            start_id = max_id + 1
+            if max_id > 0:
+                print(f"Auto-detected start_id={start_id} (max existing ID was {max_id})")
+        self._start_id = start_id
+        self._next_id = start_id
 
     # ── ID management ──
 
@@ -235,10 +252,37 @@ class EditSession:
         """Find paragraph by w14:paraId."""
         return find_para_by_para_id(self.dom, para_id)
 
+    # ── Phrase-level editing ──
+
+    def replace_phrase_in_run(self, run_node, phrase, replacement, rpr=None):
+        """Surgically replace a phrase within a run, tracking only the changed words.
+
+        Splits run into: prefix + <w:del>phrase</w:del><w:ins>replacement</w:ins> + suffix.
+        Use for small phrase changes (tone fixes, value swaps) in long paragraphs.
+        For full-paragraph rewrites (>50% changed), use replace_text() instead."""
+        if rpr is None:
+            rpr = extract_rpr(run_node) or RPR_NORMAL
+        full_text = get_text(run_node)
+        idx = full_text.find(phrase)
+        if idx == -1:
+            raise ValueError(f"Phrase '{phrase}' not found in run text '{full_text[:80]}'")
+        prefix = full_text[:idx]
+        suffix = full_text[idx + len(phrase):]
+        rsid = run_node.getAttribute('w:rsidR')
+        rsid_attr = f' w:rsidR="{rsid}"' if rsid else ''
+        parts = []
+        if prefix:
+            parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{prefix}</w:t></w:r>')
+        parts.append(self.del_run(phrase, rpr))
+        parts.append(self.ins_run(replacement, rpr))
+        if suffix:
+            parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{suffix}</w:t></w:r>')
+        replace_node_with_xml(self.dom, run_node, ''.join(parts))
+
     # ── Save ──
 
     def save(self):
         """Write modified document.xml back to disk."""
         with open(self._doc_path, 'wb') as f:
             f.write(self.dom.toxml(encoding='utf-8'))
-        print(f"Saved. Change IDs used: 1–{self.last_id}")
+        print(f"Saved. Change IDs used: {self._start_id}–{self.last_id}")

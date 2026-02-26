@@ -17,15 +17,20 @@ Detailed reference for making tracked-change edits to `.docx` files. Load this b
 ```python
 import sys
 sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
-from edit_helpers import EditSession, find_run_in_line_range, find_para_by_para_id, insert_xml_after, extract_rpr, RPR_NORMAL, RPR_BOLD
+from edit_helpers import EditSession, insert_xml_after, RPR_NORMAL, RPR_BOLD
 
 # EditSession handles encoding, document loading, and auto-incrementing change IDs.
-# Check [project]/.work/changelog.md for last used ID and pass start_id accordingly.
-s = EditSession("work/[Client]/.work", "2026-02-25", "Arborist", start_id=1)
+# start_id auto-detects from existing tracked changes (max existing ID + 1).
+# Override with start_id=N if needed (check changelog for last used ID).
+s = EditSession("work/[Client]/.work", "2026-02-25", "Arborist")
 
 # Find and replace text (auto del+ins, auto rPr extraction):
 node = s.find_run("old text", 4455, 4465)
 s.replace_text(node, "old text", "new text")
+
+# Surgical phrase replacement (marks only changed words — use for ≤3 word changes):
+node = s.find_run("The tree in question is significant", 1200, 1220)
+s.replace_phrase_in_run(node, "tree in question", "subject tree")
 
 # Replace with explicit rPr:
 s.replace_text(node, "old text", "new text", RPR_BOLD)

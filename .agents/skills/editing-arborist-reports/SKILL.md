@@ -94,14 +94,19 @@ python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/extract_t
 ```
 Outputs `[project]/.work/tree_data.json` — read this instead of re-reading the full document for tree species, DBH, TPZ, condition, etc.
 
-**Step 2 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
+**Step 2 — Discover scope** before writing the script:
+- Pandoc-read or grep the document to confirm table column names — do not assume schema from templates.
+- For each target narrative paragraph: grep `document.xml` for the `w14:paraId` and note its first ~10 actual words. Use paraIds as anchors in the script (`s.find_para("XXXXXXXX")`), not template labels.
+- Confirm every target cell/paragraph actually exists before finalizing what to change.
 
-**Step 3 — Run:**
+**Step 3 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
+
+**Step 4 — Run:**
 ```bash
 python3 "[project]/.work/edit_script.py"
 ```
 
-**Step 4–7:** Follow Verification section below.
+**Step 5–8:** Follow Verification section below.
 
 ## Key Editing Principles
 
@@ -111,35 +116,43 @@ python3 "[project]/.work/edit_script.py"
 - **Preserve formatting**: Extract and reuse `<w:rPr>` from original nodes.
 - **Batch changes**: Group 3-10 related edits per script.
 - **Grep first**: Always check `word/document.xml` line numbers before editing.
+- **paraId anchoring**: For narrative paragraphs, prefer `s.find_para("XXXXXXXX")` over line-range text matching — paraIds are stable across content changes. Grep the XML for `w14:paraId` during the discovery step.
+- **Surgical phrase edits**: For small phrase changes (≤3 words) within long paragraphs, use `s.replace_phrase_in_run(run, phrase, replacement)` instead of `replace_text()` — it marks only the changed words as del/ins.
 - **Section 5 edits**: Load `reference/section5-layout.md` before editing the conclusion section.
 - **Consistency check**: After completing scoped edits, scan the Summary section and other sections for contradictions with the new content before packing (e.g., source-of-impact wording must match across Summary, impact table, and narrative).
 
 ## Verification and Logging
 
-**Step 4 — Pack:**
+**Step 5 — Pack:**
 ```bash
 cd "$SKILL_OFFICE" && python3 pack.py "[project]/.work/unpacked/temp" "$PROJECT_ROOT/complete/[Address] Report.docx" --validate false
 ```
 
-**Step 5 — Verify:**
+**Step 6 — Verify:**
 ```bash
-pandoc --track-changes=all "$PROJECT_ROOT/complete/[Address] Report.docx" -t plain \
-    | grep -i "expected change"
-```
+# Primary — confirm final accepted state (acceptance test):
+pandoc --track-changes=accept "$PROJECT_ROOT/complete/[Address] Report.docx" -t plain \
+    | grep -i "new text"
 
-**Step 6 — Log** edits in `[project]/.work/changelog.md`. Required fields:
+# Secondary — inspect markup (shows both deleted and inserted inline):
+pandoc --track-changes=all "$PROJECT_ROOT/complete/[Address] Report.docx" -t plain \
+    | grep -i "target text"
+```
+The `--track-changes=all` output includes deleted text inline — don't mistake it for surviving text. Always confirm the acceptance-test output first.
+
+**Step 7 — Log** edits in `[project]/.work/changelog.md`. Required fields:
 - **Date** and **description** of changes
 - **Change IDs** used (range, e.g. 1–16)
 - **RSID** used for the session
 - **Author** and **date stamp** on tracked changes
 
-**Step 7 — Promote:**
+**Step 8 — Promote:**
 ```bash
 rm -rf "[project]/.work/unpacked/current"
 mv "[project]/.work/unpacked/temp" "[project]/.work/unpacked/current"
 ```
 
-**Step 8 — Review** (optional but recommended):
+**Step 9 — Review** (optional but recommended):
 - Cross-section consistency: do Summary, impact table, and narrative all agree?
 - Were all SKILL.md steps followed (RSID captured, references loaded, guideline loaded for narrative)?
 - Any workarounds used that indicate tooling gaps? Note in memory.
