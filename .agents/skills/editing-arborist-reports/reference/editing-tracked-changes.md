@@ -49,6 +49,9 @@ insert_xml_after(s.dom, para,
 xml = s.del_run("old") + s.ins_run("new", RPR_BOLD)
 
 # ── Builder functions (for insert-heavy edits) ──
+# All builders accept optional rpr= to override hardcoded RPR_ constants.
+# IMPORTANT: Extract actual rPr from the live document via get_schema.py —
+# the hardcoded constants (RPR_SEC4, RPR_INJURY, etc.) may not match every report.
 
 # Impact table row (3-col):
 anchor_tr = s.find_tr("16321D29")
@@ -57,14 +60,14 @@ insert_xml_after(s.dom, anchor_tr, impact_row(s, 5, "Removal — condition-based
 # Injury detail row (4-col):
 insert_xml_after(s.dom, anchor_tr, injury_row(s, "Front walkway", "3.1m", '4"', "Moderate"))
 
-# Section 4 data row (10-col):
-insert_xml_after(s.dom, anchor_tr, sec4_row(s, ["15", "Silver Maple", "Acer saccharinum", "22", "Good", "", "Private", "Injury", "4.4", "Yes"]))
+# Section 4 data row (10-col) — pass rpr= extracted from existing data row:
+insert_xml_after(s.dom, anchor_tr, sec4_row(s, ["15", "Silver Maple", "Acer saccharinum", "22", "Good", "", "Private", "Injury", "4.4", "Yes"], rpr=live_rpr))
 
 # Mini-table (floating 8-col tree summary — tblpX/tblpY from get_schema.py):
 insert_xml_after(s.dom, para, mini_table(s, 15, "Silver Maple", 22, "Good", "Good health", "Private", "Injury", 4.4, tblpX="1513", tblpY="2322"))
 
-# Injury detail table (header + rows):
-insert_xml_after(s.dom, para, injury_detail_table(s, [("Front driveway", "2.1m", '4"', "Moderate")]))
+# Injury detail table (header + rows — tblpX/tblpY for floating, rpr overrides):
+insert_xml_after(s.dom, para, injury_detail_table(s, [("Front driveway", "2.1m", '4"', "Moderate")], tblpX="1513", tblpY="5500"))
 
 s.save()  # Prints IDs used range
 ```

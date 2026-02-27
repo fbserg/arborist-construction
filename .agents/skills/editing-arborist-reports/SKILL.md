@@ -63,7 +63,7 @@ Ask what the user needs:
 mkdir -p "$PROJECT_ROOT/work/[Client]/.work"
 cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/new/[Address] Report.docx" "[project]/.work/unpacked/temp"
 ```
-Record the suggested RSID — use it as `w:rsidR` on all new runs in the edit script.
+Generate an 8-hex-digit RSID (e.g. `00F2A1B3`) — use it as `w:rsidR` on all new runs in the edit script. (unpack.py does not output a suggested RSID.)
 
 **Step 2:** Read content rules. Load `$PROJECT_ROOT/guideline.md` for impact profiles, species tolerance, narrative templates, TPZ calculations, and post-removal notes.
 
@@ -86,7 +86,7 @@ pandoc "path/to/document.docx" -t markdown     # or -o "[project]/[Name].md" to 
 ```bash
 cd "$SKILL_OFFICE" && python3 unpack.py "path/to/document.docx" "[project]/.work/unpacked/temp"
 ```
-Record the suggested RSID — use it as `w:rsidR` on all new runs in the edit script.
+Generate an 8-hex-digit RSID (e.g. `00F2A1B3`) — use it as `w:rsidR` on all new runs in the edit script. (unpack.py does not output a suggested RSID.)
 
 **Step 1b — Extract tree data** (if not already done for this project):
 ```bash
@@ -111,6 +111,8 @@ Walk every insert operation in the plan and build a table:
 | New narrative paragraph | `ins_para()` helper — no extract needed | — |
 
 Write `get_schema.py` to extract one live example of every ✗ row. Run it. Verify output covers the full inventory. Fix and re-run until all ✗ become ✓.
+
+**get_schema.py must also validate RPR constants.** For every table type that uses a builder function (`sec4_row`, `impact_row`, `injury_row`, `injury_detail_table`), extract the `w:rPr` from an existing data row and print it alongside the hardcoded `RPR_*` constant. If they differ (font size, language, bold, color), pass the extracted rPr to the builder via `rpr=` override in the edit script. The hardcoded constants (`RPR_SEC4`, `RPR_INJURY`, etc.) are fallbacks — they were extracted from one sample report and may not match the current document.
 
 **After get_schema.py succeeds: document.xml is sealed.** Any schema gap found while writing edit_script.py → fix get_schema.py and re-run. Never use sed/grep on document.xml for schema discovery after this point.
 
@@ -137,6 +139,11 @@ python3 "[project]/.work/edit_script.py"
 - **Batch changes**: Group 3-10 related edits per script.
 - **Surgical phrase edits**: For small phrase changes (≤3 words) within long paragraphs, use `s.replace_phrase_in_run(run, phrase, replacement)` instead of `replace_text()` — it marks only the changed words as del/ins.
 - **Section 5 edits**: Load `reference/section5-layout.md` before editing the conclusion section.
+- **Boilerplate paragraphs — do not edit**: These Section 5 paragraphs are standard text that applies regardless of tree count or type. Never modify them when adding/editing trees:
+  - "All bylaw protected trees not slated for removal or injury are to be protected by fencing..."
+  - "No other municipally owned trees of any size, private trees, or neighbouring trees..."
+  - All RSE (Root Sensitive Excavation) boilerplate paragraphs
+  - General Notes and signature block
 - **Consistency check**: After completing scoped edits, scan the Summary section and other sections for contradictions with the new content before packing (e.g., source-of-impact wording must match across Summary, impact table, and narrative).
 - **paraId anchoring**: For narrative paragraphs, prefer `s.find_para("XXXXXXXX")` over line-range text matching — paraIds are stable across content changes.
 
@@ -190,6 +197,8 @@ pandoc --track-changes=all "$PROJECT_ROOT/complete/[Address] Report.docx" -t pla
     | grep -i "target text"
 ```
 The `--track-changes=all` output includes deleted text inline — don't mistake it for surviving text. Always confirm the acceptance-test output first.
+
+**Pandoc limitations:** Pandoc verification confirms text content only — it cannot detect font size mismatches, table positioning errors (floating vs. in-flow), or styling inconsistencies between original and inserted elements. For formatting-sensitive edits (new table rows, mini-tables), also verify via the get_schema.py RPR validation output or manual review in Word/LibreOffice.
 
 **Step 7 — Log** edits in `[project]/.work/changelog.md`. Required fields:
 - **Date** and **description** of changes

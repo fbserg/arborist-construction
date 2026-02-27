@@ -376,43 +376,56 @@ def tc(width, wtype, text, rpr, centered=True, borders="single", fill="none",
 </w:tc>'''
 
 
-def impact_row(sess, tree_num, source, result):
-    """Build a 3-col impact table row (pct widths: 528/3563/909) as tracked insertion."""
+def impact_row(sess, tree_num, source, result, rpr=None):
+    """Build a 3-col impact table row (pct widths: 528/3563/909) as tracked insertion.
+
+    rpr: override run properties (extracted from live document via get_schema.py).
+         Falls back to RPR_IMPACT if not provided.
+    """
+    rpr = rpr or RPR_IMPACT
     row_id = sess.next_id()
     pid = sess.generate_para_id(f"1A0{tree_num:04X}", "0")
     return (
         f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
         f'<w:trPr><w:trHeight w:val="679"/>'
         f'<w:ins w:id="{row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
-        + tc("528",  "pct", str(tree_num), RPR_IMPACT, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
-        + tc("3563", "pct", source,        RPR_IMPACT, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
-        + tc("909",  "pct", result,        RPR_IMPACT, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("528",  "pct", str(tree_num), rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("3563", "pct", source,        rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("909",  "pct", result,        rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
         + '</w:tr>'
     )
 
 
-def injury_row(sess, source, distance, depth, rating):
-    """Build a 4-col injury detail table row (pct widths: 1702/1096/853/1349) as tracked insertion."""
+def injury_row(sess, source, distance, depth, rating, rpr=None):
+    """Build a 4-col injury detail table row (pct widths: 1702/1096/853/1349) as tracked insertion.
+
+    rpr: override run properties. Falls back to RPR_INJURY if not provided.
+    """
+    rpr = rpr or RPR_INJURY
     row_id = sess.next_id()
     pid = sess.generate_para_id(f"2A0{row_id:04X}", "0")
     return (
         f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
         f'<w:trPr><w:trHeight w:val="763"/>'
         f'<w:ins w:id="{row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
-        + tc("1702", "pct", source,   RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
-        + tc("1096", "pct", distance, RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
-        + tc("853",  "pct", depth,    RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
-        + tc("1349", "pct", rating,   RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("1702", "pct", source,   rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("1096", "pct", distance, rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("853",  "pct", depth,    rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("1349", "pct", rating,   rpr, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
         + '</w:tr>'
     )
 
 
-def sec4_row(sess, cols, fill="FFFFFF"):
+def sec4_row(sess, cols, fill="FFFFFF", rpr=None):
     """Build a 10-col Section 4 data row (dxa widths).
 
     fill: "FFFFFF" (white, nil top/left borders) or "F2F2F2" (gray, single all sides)
     cols: list of 10 text values matching Section 4 column order.
+    rpr: override run properties. Falls back to RPR_SEC4 if not provided.
+         IMPORTANT: RPR_SEC4 uses sz=16/en-PH which may not match all reports.
+         Extract the actual rPr from an existing data row via get_schema.py.
     """
+    rpr = rpr or RPR_SEC4
     widths = [789, 1158, 1300, 675, 1163, 4281, 1217, 1062, 779, 1393]
     row_id = sess.next_id()
     pid = sess.generate_para_id(f"3A0{row_id:04X}", "0")
@@ -426,7 +439,7 @@ def sec4_row(sess, cols, fill="FFFFFF"):
         centered = (i != 5)
         top_b = "nil" if fill == "FFFFFF" else "single"
         lft_b = "nil" if fill == "FFFFFF" else "single"
-        row_xml += tc(str(w), "dxa", text, RPR_SEC4, centered=centered,
+        row_xml += tc(str(w), "dxa", text, rpr, centered=centered,
                       fill=fill, ins_id=sess.next_id(), top_border=top_b, left_border=lft_b,
                       author=sess.author, date=date_short)
     row_xml += '</w:tr>'
@@ -511,11 +524,19 @@ def mini_table(sess, tree_num, species, dbh, condition, comments, ownership, dir
     )
 
 
-def injury_detail_table(sess, rows_data):
+def injury_detail_table(sess, rows_data, hdr_rpr=None, data_rpr=None,
+                        tblpX=None, tblpY=None):
     """Build a complete 4-col injury detail table with header + data rows.
 
     rows_data: list of (source, distance, depth, rating) tuples.
+    hdr_rpr: override header run properties. Falls back to RPR_MINI_HDR.
+    data_rpr: override data row run properties. Falls back to RPR_INJURY.
+              Passed through to injury_row() calls.
+    tblpX/tblpY: if provided, makes the table floating (absolute page position).
+                 Extract from existing injury detail table via get_schema.py.
+                 If omitted, table is in-flow (no positioning).
     """
+    hdr_rpr = hdr_rpr or RPR_MINI_HDR
     date_short = sess.date.split("T")[0]
     hdr_row_id = sess.next_id()
     hdr_pid = sess.generate_para_id(f"5A0{hdr_row_id:04X}", "0")
@@ -523,15 +544,21 @@ def injury_detail_table(sess, rows_data):
         f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{hdr_pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
         f'<w:trPr><w:trHeight w:val="809"/>'
         f'<w:ins w:id="{hdr_row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
-        + tc("1702", "pct", "Injury source",               RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
-        + tc("1096", "pct", "Closest point of impact (m)", RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
-        + tc("853",  "pct", "Max depth of excavation",     RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
-        + tc("1349", "pct", "Impact to condition",         RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("1702", "pct", "Injury source",               hdr_rpr, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("1096", "pct", "Closest point of impact (m)", hdr_rpr, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("853",  "pct", "Max depth of excavation",     hdr_rpr, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("1349", "pct", "Impact to condition",         hdr_rpr, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
         + '</w:tr>'
     )
-    data_rows = "".join(injury_row(sess, src, dist, dep, rat) for src, dist, dep, rat in rows_data)
+    data_rows = "".join(injury_row(sess, src, dist, dep, rat, rpr=data_rpr) for src, dist, dep, rat in rows_data)
+    tblp = ''
+    if tblpX is not None and tblpY is not None:
+        tblp = (f'<w:tblpPr w:leftFromText="180" w:rightFromText="180"'
+                f' w:vertAnchor="page" w:horzAnchor="page"'
+                f' w:tblpX="{tblpX}" w:tblpY="{tblpY}"/>')
     return (
         f'<w:tbl><w:tblPr>'
+        f'{tblp}'
         f'<w:tblW w:w="5000" w:type="pct"/>'
         f'<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
         f'</w:tblPr>'
