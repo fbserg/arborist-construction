@@ -98,30 +98,44 @@ Outputs `[project]/.work/tree_data.json` — read this instead of re-reading the
 ```bash
 python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/map_report.py" "[project]/.work"
 ```
-Outputs heading list, tree sections with paraIds + line numbers + previews, table column schemas, and summary paragraphs. JSON saved to `[project]/.work/map.json` — reference it when writing the edit script instead of grepping `document.xml` by hand.
+Outputs to `[project]/.work/map.json`:
+- Heading list with paraIds + line numbers
+- Tables with **cell-level data**: each row has `row_para_id` and per-cell `{para_id, text, col_name}` — use these for `find_para()` calls instead of grepping `document.xml`
+- Tree sections with paraIds + line numbers + previews
+- Summary paragraphs
+- **Permit bullets**: Section 5 permit count paragraphs with paraIds (e.g. "Removal Permit requirement: 6 trees")
 
-**Step 1d — Schema inventory** (required before any insert-heavy edit):
+**Step 1d — Extract schema** (required before any insert-heavy edit):
+```bash
+python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/get_schema.py" "[project]/.work"
+```
+Reads `map.json` + `document.xml`. Outputs `[project]/.work/schema.json` with:
+- Live rPr (inner XML) for every table type (sec4, impact, mini, injury_detail, removal, replanting)
+- Table positioning (floating vs in-flow, tblpPr attributes)
+- RPR constant validation (compares live values against edit_helpers defaults)
 
-Walk every insert operation in the plan and build a table:
+**Use schema.json rPr in edit scripts.** Pass `rpr=schema['rpr']['mini_data']` to builder functions. The hardcoded constants (`RPR_SEC4`, `RPR_INJURY`, etc.) are fallbacks — they were extracted from one sample report and may not match the current document.
 
-| Insert operation | XML structure needed | In get_schema.py? |
-|---|---|---|
-| New table row (any table) | `w:tr` from that specific table | ✓/✗ |
-| New floating mini-table (tree entry) | Full `w:tbl` + data `w:tr` | ✓/✗ |
-| New narrative paragraph | `ins_para()` helper — no extract needed | — |
-
-Write `get_schema.py` to extract one live example of every ✗ row. Run it. Verify output covers the full inventory. Fix and re-run until all ✗ become ✓.
-
-**get_schema.py must also validate RPR constants.** For every table type that uses a builder function (`sec4_row`, `impact_row`, `injury_row`, `injury_detail_table`), extract the `w:rPr` from an existing data row and print it alongside the hardcoded `RPR_*` constant. If they differ (font size, language, bold, color), pass the extracted rPr to the builder via `rpr=` override in the edit script. The hardcoded constants (`RPR_SEC4`, `RPR_INJURY`, etc.) are fallbacks — they were extracted from one sample report and may not match the current document.
-
-**After get_schema.py succeeds: document.xml is sealed.** Any schema gap found while writing edit_script.py → fix get_schema.py and re-run. Never use sed/grep on document.xml for schema discovery after this point.
+**After get_schema.py succeeds: document.xml is sealed.** Never use sed/grep on document.xml for schema discovery after this point.
 
 **Step 2 — Discover scope** before writing the script:
-- Use `map.json` (from Step 1c) for paraIds, table schemas, and section structure — do not assume schema from templates.
-- For each target narrative paragraph: read the paraId and preview from the map output. Confirm the paragraph exists and note its first ~10 words before finalizing what to change.
+- Use `map.json` (from Step 1c) for paraIds — it has **cell-level paraIds** for every table cell. Use `table['rows'][N]['cells'][M]['para_id']` for `find_para()` calls.
+- Use `map.json` `permit_bullets` for permit count paragraph paraIds.
+- Use `schema.json` (from Step 1d) for live rPr values — pass to builders via `rpr=`.
+- For each target narrative paragraph: read the paraId and preview from the map output.
 - Cross-check: confirm every target cell/paragraph actually exists.
 
 **Step 3 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
+
+**Required in every edit script:** call `s.validate_targets()` before any mutations:
+```python
+s.validate_targets([
+    ("65486C2D", "w:p", "Sec4 tree 2 direction cell"),
+    ("5EC182F9", "w:tr", "Impact table row for trees 2,3"),
+    # ... all paraIds the script will target
+])
+```
+This catches paraId type confusion (w:tr vs w:p) before any edits are made. If a target is missing, the script fails cleanly with no partial changes (auto-backup restores document.xml).
 
 **Step 4 — Run:**
 ```bash
@@ -155,17 +169,19 @@ The only thing that reads document.xml is Python code (`load_document()` in edit
 
 | Need | Tool |
 |---|---|
-| ParaId exists? | `map.json` |
+| ParaId exists? | `map.json` (cell-level paraIds in `rows[N].cells[M].para_id`) |
 | Section structure? | `map.json` headings list (absence of a heading IS the answer) |
-| Row XML schema? | `get_schema.py` |
+| Permit bullet paraIds? | `map.json` `permit_bullets` section |
+| Live rPr for builders? | `schema.json` (from standard `get_schema.py`) |
+| Table positioning? | `schema.json` `tables[type].positioning` |
 | Find text at runtime? | `find_run(text, lo, hi)` in the edit script |
 | Tree data? | `tree_data.json` |
 
 **Before any grep/sed on document.xml, ask:** does map.json, tree_data.json, or get_schema.py output already answer this? If yes, stop.
 
-### The get_schema.py seal
+### The schema seal
 
-Before writing `get_schema.py`, produce a **schema inventory**: walk every insert operation in the plan and list each XML row/table type that edit_script.py will INSERT. Write get_schema.py to extract one live example of each. Run it. Compare output against the inventory. If anything is missing → fix get_schema.py and re-run.
+Run the standard `get_schema.py` (Step 1d). Review its output — check that all table types your edit needs are classified and have live rPr extracted. If a table type is missing (e.g., the report has no existing injury tables), the builder functions will use their RPR defaults — check `schema.json` `rpr_validation` for mismatches and override accordingly.
 
 **After get_schema.py succeeds: document.xml is sealed.** Schema gap found while writing edit_script.py → fix get_schema.py and re-run. No shell access to document.xml.
 

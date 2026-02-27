@@ -6,7 +6,7 @@ Usage:
     from edit_helpers import tc, impact_row, injury_row, sec4_row, mini_table, injury_detail_table
 """
 
-import sys, os, xml.dom.minidom as minidom
+import sys, os, shutil, xml.dom.minidom as minidom
 
 # ─── Encoding setup ──────────────────────────────────────────────────────────
 
@@ -164,6 +164,10 @@ class EditSession:
         self.author = author
         self.rsid = rsid or ""
 
+        # Backup document.xml before any edits
+        self._backup_path = self._doc_path + '.bak'
+        shutil.copy2(self._doc_path, self._backup_path)
+
         # Load document
         with open(self._doc_path, 'r', encoding='utf-8') as f:
             self.content = f.read()
@@ -317,12 +321,54 @@ class EditSession:
                 return tr
         raise ValueError(f"Table row with paraId={para_id} not found")
 
-    # ── Save ──
+    # ── Validation ──
+
+    def validate_targets(self, targets):
+        """Pre-flight check: verify all edit targets exist before mutations.
+
+        Args:
+            targets: list of (paraId, expected_tag, label) tuples.
+                expected_tag: 'w:p' for paragraphs, 'w:tr' for table rows.
+                label: human-readable description for error messages.
+
+        Raises:
+            ValueError listing all missing targets (not just the first).
+        """
+        missing = []
+        for para_id, expected_tag, label in targets:
+            found = False
+            for node in self.dom.getElementsByTagName(expected_tag):
+                if node.getAttribute('w14:paraId') == para_id:
+                    found = True
+                    break
+            if not found:
+                missing.append(f"  {label}: paraId={para_id} expected {expected_tag}")
+        if missing:
+            raise ValueError(
+                f"validate_targets failed — {len(missing)} target(s) not found:\n"
+                + "\n".join(missing)
+            )
+
+    # ── Save / Rollback ──
+
+    def rollback(self):
+        """Restore document.xml from backup and re-parse DOM."""
+        if not os.path.exists(self._backup_path):
+            raise FileNotFoundError("No backup file to rollback to")
+        shutil.copy2(self._backup_path, self._doc_path)
+        with open(self._doc_path, 'r', encoding='utf-8') as f:
+            self.content = f.read()
+        self.dom = minidom.parseString(self.content.encode('utf-8'))
+        self._next_id = self._start_id
+        print(f"Rolled back to backup. IDs reset to {self._start_id}.")
 
     def save(self):
         """Write modified document.xml back to disk."""
         with open(self._doc_path, 'wb') as f:
             f.write(self.dom.toxml(encoding='utf-8'))
+        # Clean up backup after successful save
+        if os.path.exists(self._backup_path):
+            os.remove(self._backup_path)
         print(f"Saved. Change IDs used: {self._start_id}–{self.last_id}")
 
 
@@ -447,12 +493,16 @@ def sec4_row(sess, cols, fill="FFFFFF", rpr=None):
 
 
 def mini_table(sess, tree_num, species, dbh, condition, comments, ownership, direction, tpz,
-               tblpX="1513", tblpY="2322"):
+               tblpX="1513", tblpY="2322", hdr_rpr=None, data_rpr=None):
     """Build a full 8-col floating mini-table (header row + data row) as tracked insertion.
 
     tblpX/tblpY: absolute page-position coordinates for the floating table.
     Must be extracted from an existing mini-table via get_schema.py for each report.
+    hdr_rpr: override header run properties. Falls back to RPR_MINI_HDR.
+    data_rpr: override data row run properties. Falls back to RPR_MINI.
     """
+    hdr_rpr = hdr_rpr or RPR_MINI_HDR
+    data_rpr = data_rpr or RPR_MINI
     hdr_cols = ["TREE #", "Species", "DBH (cm)", "Condition Rating",
                 "Comments (* denotes approx DBH)", "Ownership\nCategory", "Direction", "TPZ (m)"]
     hdr_widths = [839, 1129, 707, 1271, 2789, 1275, 1083, 678]
@@ -481,14 +531,14 @@ def mini_table(sess, tree_num, species, dbh, condition, comments, ownership, dir
                 f'</w:tcBorders>'
                 f'<w:shd w:val="clear" w:color="000000" w:fill="F2F2F2"/>'
                 f'<w:vAlign w:val="center"/><w:hideMark/></w:tcPr>'
-                f'<w:p><w:pPr><w:jc w:val="center"/><w:rPr>{RPR_MINI_HDR}</w:rPr></w:pPr>'
+                f'<w:p><w:pPr><w:jc w:val="center"/><w:rPr>{hdr_rpr}</w:rPr></w:pPr>'
                 f'<w:ins w:id="{iid}" w:author="{sess.author}" w:date="{sess.date}">'
-                f'<w:r><w:rPr>{RPR_MINI_HDR}</w:rPr>'
+                f'<w:r><w:rPr>{hdr_rpr}</w:rPr>'
                 f'<w:t>{parts[0]}</w:t><w:br/><w:t>{parts[1]}</w:t>'
                 f'</w:r></w:ins></w:p></w:tc>'
             )
         else:
-            hdr_row += tc(str(w), "dxa", text, RPR_MINI_HDR, centered=True,
+            hdr_row += tc(str(w), "dxa", text, hdr_rpr, centered=True,
                           fill="F2F2F2", ins_id=sess.next_id(),
                           top_border="single", left_border=lft,
                           author=sess.author, date=date_short)
@@ -504,7 +554,7 @@ def mini_table(sess, tree_num, species, dbh, condition, comments, ownership, dir
     )
     for i, (w, text) in enumerate(zip(hdr_widths, data_cols)):
         lft = "single" if i == 0 else "nil"
-        data_row += tc(str(w), "dxa", text, RPR_MINI, centered=(i != 4),
+        data_row += tc(str(w), "dxa", text, data_rpr, centered=(i != 4),
                        fill="F2F2F2", ins_id=sess.next_id(), top_border="nil", left_border=lft,
                        author=sess.author, date=date_short)
     data_row += '</w:tr>'

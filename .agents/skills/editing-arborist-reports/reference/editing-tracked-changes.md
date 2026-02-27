@@ -15,7 +15,7 @@ Detailed reference for making tracked-change edits to `.docx` files. Load this b
 ## Edit Script Template
 
 ```python
-import sys
+import sys, json
 sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
 from edit_helpers import EditSession, insert_xml_after, RPR_NORMAL, RPR_BOLD
 # Builder functions for table rows/mini-tables (import only what the script needs):
@@ -25,7 +25,20 @@ from edit_helpers import tc, impact_row, injury_row, sec4_row, mini_table, injur
 # start_id auto-detects from existing tracked changes (max existing ID + 1).
 # Override with start_id=N if needed (check changelog for last used ID).
 # rsid: record the RSID from unpack output — used as w:rsidR on new runs/rows.
+# Auto-backup: document.xml is backed up on init; call s.rollback() on failure.
 s = EditSession("work/[Client]/.work", "2026-02-25", "Arborist", rsid="00AB12CD")
+
+# Load live rPr from schema.json (always use instead of hardcoded RPR_ constants):
+with open("work/[Client]/.work/schema.json") as f:
+    schema = json.load(f)
+LIVE_MINI_RPR = schema['rpr'].get('mini_data')
+LIVE_MINI_HDR = schema['rpr'].get('mini_hdr')
+
+# Pre-flight validation — catches paraId type confusion before any mutations:
+s.validate_targets([
+    ("65486C2D", "w:p", "target cell description"),
+    ("5EC182F9", "w:tr", "target row description"),
+])
 
 # Find and replace text (auto del+ins, auto rPr extraction):
 node = s.find_run("old text", 4455, 4465)
@@ -63,8 +76,8 @@ insert_xml_after(s.dom, anchor_tr, injury_row(s, "Front walkway", "3.1m", '4"', 
 # Section 4 data row (10-col) — pass rpr= extracted from existing data row:
 insert_xml_after(s.dom, anchor_tr, sec4_row(s, ["15", "Silver Maple", "Acer saccharinum", "22", "Good", "", "Private", "Injury", "4.4", "Yes"], rpr=live_rpr))
 
-# Mini-table (floating 8-col tree summary — tblpX/tblpY from get_schema.py):
-insert_xml_after(s.dom, para, mini_table(s, 15, "Silver Maple", 22, "Good", "Good health", "Private", "Injury", 4.4, tblpX="1513", tblpY="2322"))
+# Mini-table (floating 8-col tree summary — tblpX/tblpY from schema.json, rPr overrides):
+insert_xml_after(s.dom, para, mini_table(s, 15, "Silver Maple", 22, "Good", "Good health", "Private", "Injury", 4.4, tblpX="1513", tblpY="2322", hdr_rpr=LIVE_MINI_HDR, data_rpr=LIVE_MINI_RPR))
 
 # Injury detail table (header + rows — tblpX/tblpY for floating, rpr overrides):
 insert_xml_after(s.dom, para, injury_detail_table(s, [("Front driveway", "2.1m", '4"', "Moderate")], tblpX="1513", tblpY="5500"))
