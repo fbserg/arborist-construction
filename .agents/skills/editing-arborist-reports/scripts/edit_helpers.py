@@ -2,8 +2,10 @@
 
 Usage:
     sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
-    from edit_helpers import EditSession, insert_xml_after, RPR_NORMAL, RPR_BOLD
+    from edit_helpers import EditSession, insert_xml_after, replace_node_with_xml, get_text
+    from edit_helpers import prev_element_sibling, next_element_sibling, extract_rpr
     from edit_helpers import tc, impact_row, injury_row, sec4_row, mini_table, injury_detail_table
+    from edit_helpers import RPR_NORMAL, RPR_BOLD
 """
 
 import sys, os, shutil, xml.dom.minidom as minidom
@@ -96,6 +98,22 @@ def extract_rpr(node):
     """Pull <w:rPr> XML string from an existing run node. Returns '' if none."""
     rpr_nodes = node.getElementsByTagName('w:rPr')
     return rpr_nodes[0].toxml() if rpr_nodes else ''
+
+
+def prev_element_sibling(node):
+    """Walk to previous sibling, skipping whitespace text nodes."""
+    sib = node.previousSibling
+    while sib and sib.nodeType == sib.TEXT_NODE:
+        sib = sib.previousSibling
+    return sib
+
+
+def next_element_sibling(node):
+    """Walk to next sibling, skipping whitespace text nodes."""
+    sib = node.nextSibling
+    while sib and sib.nodeType == sib.TEXT_NODE:
+        sib = sib.nextSibling
+    return sib
 
 
 def load_document(work_path):
@@ -214,6 +232,11 @@ class EditSession:
         """Last ID that was issued (for logging)."""
         return self._next_id - 1
 
+    @property
+    def date_short(self):
+        """Date without time component, e.g. '2026-02-25'."""
+        return self.date.split("T")[0]
+
     def generate_para_id(self, prefix, suffix=""):
         """Generate a paraId with collision detection.
 
@@ -234,8 +257,9 @@ class EditSession:
         if rpr is None:
             rpr = RPR_NORMAL
         id_ = self.next_id()
+        text_esc = _escape_xml(text)
         return (f'<w:del w:id="{id_}" w:author="{self.author}" w:date="{self.date}">'
-                f'<w:r>{rpr}<w:delText xml:space="preserve">{text}</w:delText></w:r>'
+                f'<w:r>{rpr}<w:delText xml:space="preserve">{text_esc}</w:delText></w:r>'
                 f'</w:del>')
 
     def ins_run(self, text, rpr=None):
@@ -243,14 +267,21 @@ class EditSession:
         if rpr is None:
             rpr = RPR_NORMAL
         id_ = self.next_id()
+        text_esc = _escape_xml(text)
         return (f'<w:ins w:id="{id_}" w:author="{self.author}" w:date="{self.date}">'
-                f'<w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r>'
+                f'<w:r>{rpr}<w:t xml:space="preserve">{text_esc}</w:t></w:r>'
                 f'</w:ins>')
 
     def replace_text(self, node, old_text, new_text, rpr=None):
         """Replace a run node: <w:del>old</w:del><w:ins>new</w:ins>.
 
-        Uses the node's own rPr if rpr is not specified."""
+        Uses the node's own rPr if rpr is not specified.
+        Raises ValueError if node text doesn't match old_text."""
+        actual = get_text(node)
+        if actual != old_text:
+            raise ValueError(
+                f"replace_text mismatch: expected '{old_text}' but node contains '{actual[:80]}'"
+            )
         if rpr is None:
             rpr = extract_rpr(node) or RPR_NORMAL
         xml = self.del_run(old_text, rpr) + self.ins_run(new_text, rpr)
@@ -263,9 +294,10 @@ class EditSession:
         if ppr is None:
             ppr = PPR
         id_ = self.next_id()
+        text_esc = _escape_xml(text)
         return (f'<w:p>{ppr}'
                 f'<w:ins w:id="{id_}" w:author="{self.author}" w:date="{self.date}">'
-                f'<w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r>'
+                f'<w:r>{rpr}<w:t xml:space="preserve">{text_esc}</w:t></w:r>'
                 f'</w:ins></w:p>')
 
     # ── Node finding (convenience wrappers) ──
@@ -305,12 +337,54 @@ class EditSession:
         rsid_attr = f' w:rsidR="{rsid}"' if rsid else ''
         parts = []
         if prefix:
-            parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{prefix}</w:t></w:r>')
+            parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{_escape_xml(prefix)}</w:t></w:r>')
         parts.append(self.del_run(phrase, rpr))
         parts.append(self.ins_run(replacement, rpr))
         if suffix:
-            parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{suffix}</w:t></w:r>')
+            parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{_escape_xml(suffix)}</w:t></w:r>')
         replace_node_with_xml(self.dom, run_node, ''.join(parts))
+
+    # ── Bulk editing ──
+
+    def delete_para(self, para_node):
+        """Track-delete all runs in a paragraph, preserving the w:p element and pPr."""
+        for r in list(para_node.getElementsByTagName('w:r')):
+            txt = get_text(r)
+            if txt:
+                rpr = extract_rpr(r) or None
+                del_xml = self.del_run(txt, rpr)
+                replace_node_with_xml(self.dom, r, del_xml)
+
+    def delete_row(self, tr_node):
+        """Track-delete an entire table row (w:del in trPr + del_run on all cell runs)."""
+        trpr_nodes = tr_node.getElementsByTagName('w:trPr')
+        if trpr_nodes:
+            trpr = trpr_nodes[0]
+        else:
+            trpr = self.dom.createElement('w:trPr')
+            tr_node.insertBefore(trpr, tr_node.firstChild)
+        del_id = self.next_id()
+        del_elem = self.dom.createElement('w:del')
+        del_elem.setAttribute('w:id', str(del_id))
+        del_elem.setAttribute('w:author', self.author)
+        del_elem.setAttribute('w:date', self.date)
+        trpr.appendChild(del_elem)
+        for tc_node in tr_node.getElementsByTagName('w:tc'):
+            for p in tc_node.getElementsByTagName('w:p'):
+                for r in list(p.getElementsByTagName('w:r')):
+                    rpr = extract_rpr(r) or None
+                    txt = get_text(r)
+                    if txt:
+                        del_xml = self.del_run(txt, rpr)
+                        replace_node_with_xml(self.dom, r, del_xml)
+
+    def replace_in_para(self, para_node, old_text, new_text):
+        """Find-and-replace the first run in a paragraph whose text matches old_text."""
+        for r in para_node.getElementsByTagName('w:r'):
+            if get_text(r) == old_text:
+                self.replace_text(r, old_text, new_text)
+                return
+        raise ValueError(f"No run with text '{old_text}' in paragraph {para_node.getAttribute('w14:paraId')}")
 
     # ── Row/table finding ──
 
@@ -348,6 +422,17 @@ class EditSession:
                 f"validate_targets failed — {len(missing)} target(s) not found:\n"
                 + "\n".join(missing)
             )
+
+    # ── Context manager ──
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None and os.path.exists(self._backup_path):
+            self.rollback()
+            print(f"Auto-rolled back due to {exc_type.__name__}: {exc_val}")
+        return False  # don't suppress the exception
 
     # ── Save / Rollback ──
 

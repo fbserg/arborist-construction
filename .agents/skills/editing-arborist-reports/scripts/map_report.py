@@ -93,12 +93,13 @@ def _extract_headings(body, line_idx):
 def _extract_tables(body, tbl_lines, headings):
     tables = []
     tbl_nodes = [c for c in body.childNodes if c.nodeName == 'w:tbl']
-    assert len(tbl_nodes) == len(tbl_lines), (
-        f"Table count mismatch: {len(tbl_nodes)} DOM nodes vs {len(tbl_lines)} line-scanned "
-        f"<w:tbl> tags. Nested tables may be causing misalignment."
-    )
+    if len(tbl_nodes) != len(tbl_lines):
+        print(f"WARNING: {len(tbl_nodes)} top-level tables but {len(tbl_lines)} raw <w:tbl> tags "
+              f"(nested tables detected). Line numbers may be approximate.",
+              file=sys.stderr)
+    # When nested tables exist, line numbers may not align 1:1 with top-level tables
     for idx, tbl in enumerate(tbl_nodes):
-        line = tbl_lines[idx] if idx < len(tbl_lines) else None
+        line = tbl_lines[idx] if (idx < len(tbl_lines) and len(tbl_nodes) == len(tbl_lines)) else None
         rows = tbl.getElementsByTagName('w:tr')
         if not rows:
             continue
@@ -157,7 +158,9 @@ def _collect_after(body, anchor_pid, line_idx, stop_styles, stop_on_tree=False):
         has_chg = bool(node.getElementsByTagName('w:del') or node.getElementsByTagName('w:ins'))
         result.append({'para_id': pid, 'line_lo': line, 'line_hi': line,
                        'preview': _preview(text), 'has_tracked_changes': has_chg})
-        if len(result) >= 20:
+        if len(result) >= 50:
+            print(f"WARNING: paragraph collection truncated at 50 (anchor {anchor_pid})",
+                  file=sys.stderr)
             break
     # Fix line_hi: each paragraph ends just before the next one starts
     paras = [p for p in result if p.get('line_lo')]
@@ -213,6 +216,42 @@ def _extract_summary(body, headings, line_idx):
             'paragraphs': _collect_after(body, h['para_id'], line_idx, HEADING_STYLES)}
 
 
+def _extract_section_paras(body, headings, line_idx):
+    """Collect all paragraphs under each Heading1, keyed by heading paraId.
+
+    Returns dict of heading_paraId → list of {para_id, text, line} for every
+    w:p between that heading and the next Heading1 (or end of document).
+    Includes non-heading paragraphs only (tables appear as {'type': 'table'}).
+    """
+    sections = {}
+    h1_list = [h for h in headings if h['style'] == 'Heading1']
+    h1_pids = {h['para_id'] for h in h1_list}
+
+    for hi, h in enumerate(h1_list):
+        # Find next Heading1 para_id (or None for last section)
+        next_pid = h1_list[hi + 1]['para_id'] if hi + 1 < len(h1_list) else None
+        paras = []
+        collecting = False
+        for node in body.childNodes:
+            if node.nodeName == 'w:p' and node.getAttribute('w14:paraId') == h['para_id']:
+                collecting = True
+                continue
+            if not collecting:
+                continue
+            if next_pid and node.nodeName == 'w:p' and node.getAttribute('w14:paraId') == next_pid:
+                break
+            if node.nodeName == 'w:tbl':
+                paras.append({'type': 'table', 'para_id': None, 'text': '[TABLE]', 'line': None})
+                continue
+            if node.nodeName != 'w:p':
+                continue
+            pid = node.getAttribute('w14:paraId')
+            text = get_text(node).strip()
+            paras.append({'para_id': pid, 'text': text[:80], 'line': line_idx.get(pid)})
+        sections[h['para_id']] = paras
+    return sections
+
+
 def _extract_permit_bullets(body, headings, line_idx):
     """Extract permit summary bullets from Section 5 opening.
 
@@ -265,9 +304,11 @@ def map_report(work_path) -> dict:
     tree_sections = _extract_tree_sections(body, line_idx, headings)
     summary = _extract_summary(body, headings, line_idx)
     permit_bullets = _extract_permit_bullets(body, headings, line_idx)
+    section_paras = _extract_section_paras(body, headings, line_idx)
     result = {'source_path': doc_path, 'headings': headings,
               'tables': tables, 'tree_sections': tree_sections,
-              'summary': summary, 'permit_bullets': permit_bullets}
+              'summary': summary, 'permit_bullets': permit_bullets,
+              'section_paras': section_paras}
     out = os.path.join(work_path, 'map.json')
     with open(out, 'w', encoding='utf-8') as f:
         json.dump(result, f, indent=2, ensure_ascii=False)

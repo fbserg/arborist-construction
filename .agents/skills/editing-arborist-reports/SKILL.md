@@ -61,9 +61,13 @@ Ask what the user needs:
 **Step 1:** Create project folder and unpack:
 ```bash
 mkdir -p "$PROJECT_ROOT/work/[Client]/.work"
-cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/new/[Address] Report.docx" "[project]/.work/unpacked/temp"
+cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/new/[Address] Report.docx" "$PROJECT_ROOT/[project]/.work/unpacked/temp"
 ```
-Generate an 8-hex-digit RSID (e.g. `00F2A1B3`) — use it as `w:rsidR` on all new runs in the edit script. (unpack.py does not output a suggested RSID.)
+Generate an RSID for this editing session:
+```bash
+python3 -c "import secrets; print(secrets.token_hex(4).upper())"
+```
+Use it as `w:rsidR` on all new runs in the edit script.
 
 **Step 2:** Read content rules. Load `$PROJECT_ROOT/guideline.md` for impact profiles, species tolerance, narrative templates, TPZ calculations, and post-removal notes.
 
@@ -84,15 +88,32 @@ pandoc "path/to/document.docx" -t markdown     # or -o "[project]/[Name].md" to 
 
 **Step 1 — Unpack:**
 ```bash
-cd "$SKILL_OFFICE" && python3 unpack.py "path/to/document.docx" "[project]/.work/unpacked/temp"
+cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/[project]/[Name].docx" "$PROJECT_ROOT/[project]/.work/unpacked/temp"
 ```
-Generate an 8-hex-digit RSID (e.g. `00F2A1B3`) — use it as `w:rsidR` on all new runs in the edit script. (unpack.py does not output a suggested RSID.)
+Generate an RSID for this editing session:
+```bash
+python3 -c "import secrets; print(secrets.token_hex(4).upper())"
+```
+Use it as `w:rsidR` on all new runs in the edit script.
 
 **Step 1b — Extract tree data** (if not already done for this project):
 ```bash
 python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/extract_trees.py" "path/to/document.docx"
 ```
 Outputs `[project]/.work/tree_data.json` — read this instead of re-reading the full document for tree species, DBH, TPZ, condition, etc.
+
+**Step 1b-alt — Diff against updated Excel** (if an updated `.xlsx` or pasted TSV is provided):
+```bash
+# Excel file:
+python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/diff_trees.py" \
+    "$PROJECT_ROOT/[project]/[Name].docx" \
+    "$PROJECT_ROOT/new/[Address].xlsx"
+# Or TSV from stdin (pasted tab-separated data):
+echo -e "TREE #\tDirection\tTPZ (m)\n2\tInjury\t2.4" | \
+    python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/diff_trees.py" \
+        "$PROJECT_ROOT/[project]/[Name].docx" --stdin
+```
+Outputs `[project]/.work/diff.json` — per-tree field changes with old/new values. Only compares fields present in the source data (partial TSV input is fine). Use this diff to drive the edit script instead of manually reading the Excel.
 
 **Step 1c — Map report structure** (replaces manual grepping for paraIds and table schemas):
 ```bash
@@ -104,6 +125,7 @@ Outputs to `[project]/.work/map.json`:
 - Tree sections with paraIds + line numbers + previews
 - Summary paragraphs
 - **Permit bullets**: Section 5 permit count paragraphs with paraIds (e.g. "Removal Permit requirement: 6 trees")
+- **Section paragraphs** (`section_paras`): all paragraphs under each Heading1, keyed by heading paraId. Includes paraId, text preview, and line number. Tables appear as `{type: "table"}`. Eliminates manual DOM walks for Section 5, Addendum 0, etc.
 
 **Step 1d — Extract schema** (required before any insert-heavy edit):
 ```bash
@@ -112,7 +134,9 @@ python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/get_schem
 Reads `map.json` + `document.xml`. Outputs `[project]/.work/schema.json` with:
 - Live rPr (inner XML) for every table type (sec4, impact, mini, injury_detail, removal, replanting)
 - Table positioning (floating vs in-flow, tblpPr attributes)
+- **Column widths** (`column_widths` array per table type) — use `schema['tables']['removal']['column_widths']` instead of hardcoding width arrays
 - RPR constant validation (compares live values against edit_helpers defaults)
+- Warnings for missing table types (expected: sec4, impact, summary; optional: injury_detail, mini, removal, replanting)
 
 **Use schema.json rPr in edit scripts.** Pass `rpr=schema['rpr']['mini_data']` to builder functions. The hardcoded constants (`RPR_SEC4`, `RPR_INJURY`, etc.) are fallbacks — they were extracted from one sample report and may not match the current document.
 
@@ -176,6 +200,7 @@ The only thing that reads document.xml is Python code (`load_document()` in edit
 | Table positioning? | `schema.json` `tables[type].positioning` |
 | Find text at runtime? | `find_run(text, lo, hi)` in the edit script |
 | Tree data? | `tree_data.json` |
+| What changed in Excel? | `diff.json` (from `diff_trees.py`) |
 
 **Before any grep/sed on document.xml, ask:** does map.json, tree_data.json, or get_schema.py output already answer this? If yes, stop.
 
@@ -199,8 +224,9 @@ Example inventory table:
 
 **Step 5 — Pack:**
 ```bash
-cd "$SKILL_OFFICE" && python3 pack.py "[project]/.work/unpacked/temp" "$PROJECT_ROOT/complete/[Address] Report.docx" --validate false
+cd "$SKILL_OFFICE" && python3 pack.py "$PROJECT_ROOT/[project]/.work/unpacked/temp" "$PROJECT_ROOT/complete/[Address] Report.docx" --validate false
 ```
+`--validate false` is required: the built-in `RedliningValidator` hardcodes author `"Claude"` but our tracked changes use `"Arborist"`, so validation flags every change as invalid.
 
 **Step 6 — Verify:**
 ```bash
@@ -237,8 +263,8 @@ mv "[project]/.work/unpacked/temp" "[project]/.work/unpacked/current"
 ## Reset Working Directory
 
 ```bash
-rm -rf "[project]/.work/unpacked"
-cd "$SKILL_OFFICE" && python3 unpack.py "path/to/new-document.docx" "[project]/.work/unpacked/temp"
+rm -rf "$PROJECT_ROOT/[project]/.work/unpacked"
+cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/[project]/[Name].docx" "$PROJECT_ROOT/[project]/.work/unpacked/temp"
 ```
 
 Always unpack from the source docx (in `work/[Client]/` or `new/`), not from the unpacked folder.

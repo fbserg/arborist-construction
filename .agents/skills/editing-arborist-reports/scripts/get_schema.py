@@ -66,6 +66,20 @@ def _extract_table_rpr(dom, table_index):
     return hdr_rpr, data_rpr
 
 
+def _extract_column_widths(dom, table_index):
+    """Extract w:gridCol widths from a table's tblGrid."""
+    tables = dom.getElementsByTagName('w:tbl')
+    if table_index >= len(tables):
+        return None
+    tbl = tables[table_index]
+    grid = tbl.getElementsByTagName('w:tblGrid')
+    if not grid:
+        return None
+    return [int(col.getAttribute('w:w'))
+            for col in grid[0].getElementsByTagName('w:gridCol')
+            if col.getAttribute('w:w')]
+
+
 def _extract_table_positioning(dom, table_index):
     """Extract tblpPr positioning from a table."""
     tables = dom.getElementsByTagName('w:tbl')
@@ -157,13 +171,25 @@ def extract_schema(work_path):
         'injury_detail': ('RPR_MINI_HDR', RPR_MINI_HDR),
     }
 
+    # Warn about expected table types that weren't found
+    for expected in ('sec4', 'impact', 'summary'):
+        if expected not in table_types:
+            print(f"WARNING: no '{expected}' table classified — check context headings.",
+                  file=sys.stderr)
+    for optional in ('injury_detail', 'mini', 'removal', 'replanting'):
+        if optional not in table_types:
+            print(f"NOTE: no '{optional}' table found — builders will use RPR defaults.",
+                  file=sys.stderr)
+
     for label, idx in table_types.items():
         hdr_rpr, data_rpr = _extract_table_rpr(dom, idx)
         pos = _extract_table_positioning(dom, idx)
+        col_widths = _extract_column_widths(dom, idx)
 
         schema['tables'][label] = {
             'table_index': idx,
             'positioning': pos,
+            'column_widths': col_widths,
         }
         if data_rpr:
             schema['rpr'][f'{label}_data'] = data_rpr
@@ -209,7 +235,9 @@ def _print_schema(schema):
         pos_str = pos['type']
         if pos_str == 'floating':
             pos_str += f" (tblpX={pos.get('w:tblpX', '?')}, tblpY={pos.get('w:tblpY', '?')})"
-        print(f"  {label:20} table #{info['table_index']:>2}  {pos_str}")
+        widths = info.get('column_widths')
+        widths_str = f"  widths={widths}" if widths else ""
+        print(f"  {label:20} table #{info['table_index']:>2}  {pos_str}{widths_str}")
 
     print("\n── LIVE RPR ──")
     for key, val in schema['rpr'].items():
