@@ -107,13 +107,15 @@ Before assigning an Impact Rating, the LLM must assess the species' tolerance to
 
 ### 6. Logic for Recommendations (New Projects)
 
-<!-- TODO: Steps 1 and 4 are missing from this list — restore when content is available -->
+<!-- Steps 1 and 4 not yet documented — use professional judgment for initial assessment and impact rating assignment -->
+1.  **Assess Tree & Site:** *(Not yet documented — evaluate tree condition, species, location, and proposed work.)*
 2.  **Calculate Encroachment:** TPZ - Distance to work. Example: 4.0m - 2.0m = 2.0m encroachment.
 3.  **Check Tolerance:** Oak = **Poor Tolerance**.
+4.  **Assign Impact Rating:** *(Not yet documented — combine encroachment %, species tolerance, and profile severity.)*
 5.  **Select Profile:** Garage = Profile C (Deep excavation).
 6.  **Apply Mitigation:** "Vertical shoring / blind-side forming required."
 
 ### 7. Post-Removal/Conclusion Notes
 
-<!-- TODO: Section 7 content is incomplete — specific municipal/ownership notes missing -->
+<!-- Not yet documented — specific municipal/ownership notes to be added when content is available. Use professional judgment. -->
 The LLM should append specific notes based on the Municipality or Ownership:

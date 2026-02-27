@@ -10,7 +10,7 @@ Looks for unpacked/temp/word/document.xml first; falls back to unpacked/current/
 import sys, os, json, re
 import xml.dom.minidom as minidom
 
-PROJECT_ROOT = "/home/serg/projects/arborist-construction"
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT", "/home/serg/projects/arborist-construction")
 sys.path.insert(0, os.path.join(PROJECT_ROOT, ".agents/skills/editing-arborist-reports/scripts"))
 from edit_helpers import get_text
 
@@ -93,6 +93,10 @@ def _extract_headings(body, line_idx):
 def _extract_tables(body, tbl_lines, headings):
     tables = []
     tbl_nodes = [c for c in body.childNodes if c.nodeName == 'w:tbl']
+    assert len(tbl_nodes) == len(tbl_lines), (
+        f"Table count mismatch: {len(tbl_nodes)} DOM nodes vs {len(tbl_lines)} line-scanned "
+        f"<w:tbl> tags. Nested tables may be causing misalignment."
+    )
     for idx, tbl in enumerate(tbl_nodes):
         line = tbl_lines[idx] if idx < len(tbl_lines) else None
         rows = tbl.getElementsByTagName('w:tr')

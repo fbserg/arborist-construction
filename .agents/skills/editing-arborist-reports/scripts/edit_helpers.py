@@ -2,7 +2,8 @@
 
 Usage:
     sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
-    from edit_helpers import EditSession, find_run_in_line_range, find_para_by_para_id, insert_xml_after
+    from edit_helpers import EditSession, insert_xml_after, RPR_NORMAL, RPR_BOLD
+    from edit_helpers import tc, impact_row, injury_row, sec4_row, mini_table, injury_detail_table
 """
 
 import sys, os, xml.dom.minidom as minidom
@@ -80,7 +81,9 @@ def replace_node_with_xml(dom, old_node, xml_string):
     """Replace old_node in its parent with parsed XML nodes."""
     parent = old_node.parentNode
     wrapper = minidom.parseString(
-        f'<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        f' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+        f' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
         f'{xml_string}</root>'
     )
     ref = old_node.nextSibling
@@ -106,7 +109,7 @@ def load_document(work_path):
         (dom, content) — parsed minidom Document and raw XML string.
     """
     if not os.path.isabs(work_path):
-        work_path = os.path.join("/home/serg/projects/arborist-construction", work_path)
+        work_path = os.path.join(os.environ.get("PROJECT_ROOT", "/home/serg/projects/arborist-construction"), work_path)
     doc_path = os.path.join(work_path, "unpacked/temp/word/document.xml")
     with open(doc_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -141,7 +144,7 @@ class EditSession:
         s.save()
     """
 
-    def __init__(self, work_path, date, author="Arborist", start_id=None):
+    def __init__(self, work_path, date, author="Arborist", start_id=None, rsid=None):
         """
         Args:
             work_path: Path to [project]/.work directory.
@@ -149,20 +152,33 @@ class EditSession:
             author: Tracked change author name.
             start_id: First change ID to use. Defaults to None = auto-detect from DOM
                       (max existing w:del/w:ins id + 1). Pass an explicit int to override.
+            rsid: RSID from unpack output, used as w:rsidR on new runs/rows.
         """
         if not os.path.isabs(work_path):
-            work_path = os.path.join("/home/serg/projects/arborist-construction", work_path)
+            work_path = os.path.join(os.environ.get("PROJECT_ROOT", "/home/serg/projects/arborist-construction"), work_path)
         self._work_path = work_path
         self._doc_path = os.path.join(work_path, "unpacked/temp/word/document.xml")
 
         # Normalize date — accept "2026-02-25" or full ISO
         self.date = date if 'T' in date else f"{date}T00:00:00Z"
         self.author = author
+        self.rsid = rsid or ""
 
         # Load document
         with open(self._doc_path, 'r', encoding='utf-8') as f:
             self.content = f.read()
         self.dom = minidom.parseString(self.content.encode('utf-8'))
+
+        # Collect existing paraIds for collision detection
+        self._used_para_ids = set()
+        for p in self.dom.getElementsByTagName('w:p'):
+            pid = p.getAttribute('w14:paraId')
+            if pid:
+                self._used_para_ids.add(pid)
+        for tr in self.dom.getElementsByTagName('w:tr'):
+            pid = tr.getAttribute('w14:paraId')
+            if pid:
+                self._used_para_ids.add(pid)
 
         # Auto-detect start_id from existing tracked changes if not specified
         if start_id is None:
@@ -193,6 +209,19 @@ class EditSession:
     def last_id(self):
         """Last ID that was issued (for logging)."""
         return self._next_id - 1
+
+    def generate_para_id(self, prefix, suffix=""):
+        """Generate a paraId with collision detection.
+
+        Tries prefix+suffix first; if it collides, appends incrementing hex digits.
+        Registers the result so future calls won't collide either."""
+        candidate = f"{prefix}{suffix}"
+        counter = 0
+        while candidate in self._used_para_ids:
+            counter += 1
+            candidate = f"{prefix}{counter:X}{suffix}"
+        self._used_para_ids.add(candidate)
+        return candidate
 
     # ── XML generators ──
 
@@ -279,6 +308,15 @@ class EditSession:
             parts.append(f'<w:r{rsid_attr}>{rpr}<w:t xml:space="preserve">{suffix}</w:t></w:r>')
         replace_node_with_xml(self.dom, run_node, ''.join(parts))
 
+    # ── Row/table finding ──
+
+    def find_tr(self, para_id):
+        """Find w:tr with matching w14:paraId attribute."""
+        for tr in self.dom.getElementsByTagName('w:tr'):
+            if tr.getAttribute('w14:paraId') == para_id:
+                return tr
+        raise ValueError(f"Table row with paraId={para_id} not found")
+
     # ── Save ──
 
     def save(self):
@@ -286,3 +324,220 @@ class EditSession:
         with open(self._doc_path, 'wb') as f:
             f.write(self.dom.toxml(encoding='utf-8'))
         print(f"Saved. Change IDs used: {self._start_id}–{self.last_id}")
+
+
+# ─── Table-type RPR constants ───────────────────────────────────────────────
+# These match the formatting found in real report tables via get_schema.py.
+
+RPR_IMPACT = '<w:rFonts w:cs="Helvetica"/><w:szCs w:val="22"/>'
+RPR_INJURY = '<w:rFonts w:cs="Helvetica"/><w:szCs w:val="22"/>'
+RPR_SEC4 = '<w:rFonts w:cs="Helvetica"/><w:color w:val="000000"/><w:sz w:val="16"/><w:szCs w:val="16"/><w:lang w:val="en-PH" w:eastAsia="en-PH"/>'
+RPR_MINI = '<w:rFonts w:cs="Helvetica"/><w:color w:val="000000"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-PH" w:eastAsia="en-PH"/>'
+RPR_MINI_HDR = '<w:rFonts w:cs="Helvetica"/><w:b/><w:bCs/><w:color w:val="000000"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-PH" w:eastAsia="en-PH"/>'
+
+
+# ─── Builder functions ──────────────────────────────────────────────────────
+# These generate tracked-insertion XML for table rows and mini-tables.
+# All take an EditSession as first arg; IDs come from sess.next_id().
+
+def _escape_xml(text):
+    """Escape XML special characters in text content."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def tc(width, wtype, text, rpr, centered=True, borders="single", fill="none",
+       ins_id=None, author="Arborist", date="2026-02-26", left_border="single",
+       top_border="single"):
+    """Build a <w:tc> table cell with optional tracked insertion on the text run."""
+    jc = '<w:jc w:val="center"/>' if centered else ''
+    top = f'<w:top w:val="{top_border}" w:sz="4" w:space="0" w:color="auto"/>' if top_border != "nil" else '<w:top w:val="nil"/>'
+    left = f'<w:left w:val="{left_border}" w:sz="4" w:space="0" w:color="auto"/>' if left_border != "nil" else '<w:left w:val="nil"/>'
+    shd = f'<w:shd w:val="clear" w:color="000000" w:fill="{fill}"/>' if fill != "none" else ''
+    ins_open = f'<w:ins w:id="{ins_id}" w:author="{author}" w:date="{date}T00:00:00Z">' if ins_id else ''
+    ins_close = '</w:ins>' if ins_id else ''
+    text_esc = _escape_xml(text)
+    return f'''<w:tc>
+  <w:tcPr>
+    <w:tcW w:w="{width}" w:type="{wtype}"/>
+    <w:tcBorders>
+      {top}
+      {left}
+      <w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>
+      <w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>
+    </w:tcBorders>
+    {shd}
+    <w:vAlign w:val="center"/>
+    <w:hideMark/>
+  </w:tcPr>
+  <w:p>
+    <w:pPr>{jc}<w:rPr>{rpr}</w:rPr></w:pPr>
+    {ins_open}<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{text_esc}</w:t></w:r>{ins_close}
+  </w:p>
+</w:tc>'''
+
+
+def impact_row(sess, tree_num, source, result):
+    """Build a 3-col impact table row (pct widths: 528/3563/909) as tracked insertion."""
+    row_id = sess.next_id()
+    pid = sess.generate_para_id(f"1A0{tree_num:04X}", "0")
+    return (
+        f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
+        f'<w:trPr><w:trHeight w:val="679"/>'
+        f'<w:ins w:id="{row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
+        + tc("528",  "pct", str(tree_num), RPR_IMPACT, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("3563", "pct", source,        RPR_IMPACT, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("909",  "pct", result,        RPR_IMPACT, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + '</w:tr>'
+    )
+
+
+def injury_row(sess, source, distance, depth, rating):
+    """Build a 4-col injury detail table row (pct widths: 1702/1096/853/1349) as tracked insertion."""
+    row_id = sess.next_id()
+    pid = sess.generate_para_id(f"2A0{row_id:04X}", "0")
+    return (
+        f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
+        f'<w:trPr><w:trHeight w:val="763"/>'
+        f'<w:ins w:id="{row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
+        + tc("1702", "pct", source,   RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("1096", "pct", distance, RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("853",  "pct", depth,    RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + tc("1349", "pct", rating,   RPR_INJURY, centered=True, ins_id=sess.next_id(), author=sess.author, date=sess.date.split("T")[0])
+        + '</w:tr>'
+    )
+
+
+def sec4_row(sess, cols, fill="FFFFFF"):
+    """Build a 10-col Section 4 data row (dxa widths).
+
+    fill: "FFFFFF" (white, nil top/left borders) or "F2F2F2" (gray, single all sides)
+    cols: list of 10 text values matching Section 4 column order.
+    """
+    widths = [789, 1158, 1300, 675, 1163, 4281, 1217, 1062, 779, 1393]
+    row_id = sess.next_id()
+    pid = sess.generate_para_id(f"3A0{row_id:04X}", "0")
+    date_short = sess.date.split("T")[0]
+    row_xml = (
+        f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
+        f'<w:trPr><w:trHeight w:val="347"/>'
+        f'<w:ins w:id="{row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
+    )
+    for i, (w, text) in enumerate(zip(widths, cols)):
+        centered = (i != 5)
+        top_b = "nil" if fill == "FFFFFF" else "single"
+        lft_b = "nil" if fill == "FFFFFF" else "single"
+        row_xml += tc(str(w), "dxa", text, RPR_SEC4, centered=centered,
+                      fill=fill, ins_id=sess.next_id(), top_border=top_b, left_border=lft_b,
+                      author=sess.author, date=date_short)
+    row_xml += '</w:tr>'
+    return row_xml
+
+
+def mini_table(sess, tree_num, species, dbh, condition, comments, ownership, direction, tpz,
+               tblpX="1513", tblpY="2322"):
+    """Build a full 8-col floating mini-table (header row + data row) as tracked insertion.
+
+    tblpX/tblpY: absolute page-position coordinates for the floating table.
+    Must be extracted from an existing mini-table via get_schema.py for each report.
+    """
+    hdr_cols = ["TREE #", "Species", "DBH (cm)", "Condition Rating",
+                "Comments (* denotes approx DBH)", "Ownership\nCategory", "Direction", "TPZ (m)"]
+    hdr_widths = [839, 1129, 707, 1271, 2789, 1275, 1083, 678]
+    date_short = sess.date.split("T")[0]
+
+    hdr_row_id = sess.next_id()
+    hdr_pid = sess.generate_para_id(f"4A0{hdr_row_id:04X}", "0")
+    hdr_row = (
+        f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{hdr_pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
+        f'<w:trPr><w:trHeight w:val="809"/>'
+        f'<w:ins w:id="{hdr_row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
+    )
+    for i, (w, text) in enumerate(zip(hdr_widths, hdr_cols)):
+        lft = "single" if i == 0 else "nil"
+        if "\n" in text:
+            parts = text.split("\n")
+            iid = sess.next_id()
+            hdr_row += (
+                f'<w:tc><w:tcPr>'
+                f'<w:tcW w:w="{w}" w:type="dxa"/>'
+                f'<w:tcBorders>'
+                f'<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                f'<w:left w:val="{lft}" w:sz="4" w:space="0" w:color="auto"/>'
+                f'<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                f'<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                f'</w:tcBorders>'
+                f'<w:shd w:val="clear" w:color="000000" w:fill="F2F2F2"/>'
+                f'<w:vAlign w:val="center"/><w:hideMark/></w:tcPr>'
+                f'<w:p><w:pPr><w:jc w:val="center"/><w:rPr>{RPR_MINI_HDR}</w:rPr></w:pPr>'
+                f'<w:ins w:id="{iid}" w:author="{sess.author}" w:date="{sess.date}">'
+                f'<w:r><w:rPr>{RPR_MINI_HDR}</w:rPr>'
+                f'<w:t>{parts[0]}</w:t><w:br/><w:t>{parts[1]}</w:t>'
+                f'</w:r></w:ins></w:p></w:tc>'
+            )
+        else:
+            hdr_row += tc(str(w), "dxa", text, RPR_MINI_HDR, centered=True,
+                          fill="F2F2F2", ins_id=sess.next_id(),
+                          top_border="single", left_border=lft,
+                          author=sess.author, date=date_short)
+    hdr_row += '</w:tr>'
+
+    data_cols = [str(tree_num), species, str(dbh), condition, comments, ownership, direction, str(tpz)]
+    data_row_id = sess.next_id()
+    data_pid = sess.generate_para_id(f"4A0{data_row_id:04X}", "1")
+    data_row = (
+        f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{data_pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
+        f'<w:trPr><w:trHeight w:val="609"/>'
+        f'<w:ins w:id="{data_row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
+    )
+    for i, (w, text) in enumerate(zip(hdr_widths, data_cols)):
+        lft = "single" if i == 0 else "nil"
+        data_row += tc(str(w), "dxa", text, RPR_MINI, centered=(i != 4),
+                       fill="F2F2F2", ins_id=sess.next_id(), top_border="nil", left_border=lft,
+                       author=sess.author, date=date_short)
+    data_row += '</w:tr>'
+
+    return (
+        f'<w:tbl><w:tblPr>'
+        f'<w:tblpPr w:leftFromText="180" w:rightFromText="180" w:vertAnchor="page" w:horzAnchor="page" w:tblpX="{tblpX}" w:tblpY="{tblpY}"/>'
+        f'<w:tblW w:w="9771" w:type="dxa"/>'
+        f'<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
+        f'</w:tblPr>'
+        f'<w:tblGrid>'
+        f'<w:gridCol w:w="839"/><w:gridCol w:w="1129"/><w:gridCol w:w="707"/>'
+        f'<w:gridCol w:w="1271"/><w:gridCol w:w="2789"/><w:gridCol w:w="1275"/>'
+        f'<w:gridCol w:w="1083"/><w:gridCol w:w="678"/>'
+        f'</w:tblGrid>'
+        + hdr_row + data_row + '</w:tbl>'
+    )
+
+
+def injury_detail_table(sess, rows_data):
+    """Build a complete 4-col injury detail table with header + data rows.
+
+    rows_data: list of (source, distance, depth, rating) tuples.
+    """
+    date_short = sess.date.split("T")[0]
+    hdr_row_id = sess.next_id()
+    hdr_pid = sess.generate_para_id(f"5A0{hdr_row_id:04X}", "0")
+    hdr_row = (
+        f'<w:tr w:rsidR="{sess.rsid}" w14:paraId="{hdr_pid}" w14:textId="77777777" w:rsidTr="{sess.rsid}">'
+        f'<w:trPr><w:trHeight w:val="809"/>'
+        f'<w:ins w:id="{hdr_row_id}" w:author="{sess.author}" w:date="{sess.date}"/></w:trPr>'
+        + tc("1702", "pct", "Injury source",               RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("1096", "pct", "Closest point of impact (m)", RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("853",  "pct", "Max depth of excavation",     RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + tc("1349", "pct", "Impact to condition",         RPR_MINI_HDR, centered=True, fill="F2F2F2", ins_id=sess.next_id(), author=sess.author, date=date_short)
+        + '</w:tr>'
+    )
+    data_rows = "".join(injury_row(sess, src, dist, dep, rat) for src, dist, dep, rat in rows_data)
+    return (
+        f'<w:tbl><w:tblPr>'
+        f'<w:tblW w:w="5000" w:type="pct"/>'
+        f'<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
+        f'</w:tblPr>'
+        f'<w:tblGrid>'
+        f'<w:gridCol w:w="1702"/><w:gridCol w:w="1096"/>'
+        f'<w:gridCol w:w="853"/><w:gridCol w:w="1349"/>'
+        f'</w:tblGrid>'
+        + hdr_row + data_rows + '</w:tbl>'
+    )

@@ -135,11 +135,42 @@ python3 "[project]/.work/edit_script.py"
 - **Minimal edits**: Only wrap changed text in `<w:del>`/`<w:ins>` tags.
 - **Preserve formatting**: Extract and reuse `<w:rPr>` from original nodes.
 - **Batch changes**: Group 3-10 related edits per script.
-- **Never grep document.xml**: Use map.json for paraIds/structure, get_schema.py for row schemas, runtime helpers (`find_run`, `find_para`) for everything else. Shell commands on document.xml are always wrong.
-- **paraId anchoring**: For narrative paragraphs, prefer `s.find_para("XXXXXXXX")` over line-range text matching — paraIds are stable across content changes. Grep the XML for `w14:paraId` during the discovery step.
 - **Surgical phrase edits**: For small phrase changes (≤3 words) within long paragraphs, use `s.replace_phrase_in_run(run, phrase, replacement)` instead of `replace_text()` — it marks only the changed words as del/ins.
 - **Section 5 edits**: Load `reference/section5-layout.md` before editing the conclusion section.
 - **Consistency check**: After completing scoped edits, scan the Summary section and other sections for contradictions with the new content before packing (e.g., source-of-impact wording must match across Summary, impact table, and narrative).
+- **paraId anchoring**: For narrative paragraphs, prefer `s.find_para("XXXXXXXX")` over line-range text matching — paraIds are stable across content changes.
+
+### document.xml is sealed — no shell access, ever
+
+`document.xml` is ~16,000 lines. **No grep. No sed. No cat. No Read tool. Ever.**
+
+The only thing that reads document.xml is Python code (`load_document()` in edit_helpers.py, get_schema.py). Shell commands on document.xml are always wrong. Every need is already covered:
+
+| Need | Tool |
+|---|---|
+| ParaId exists? | `map.json` |
+| Section structure? | `map.json` headings list (absence of a heading IS the answer) |
+| Row XML schema? | `get_schema.py` |
+| Find text at runtime? | `find_run(text, lo, hi)` in the edit script |
+| Tree data? | `tree_data.json` |
+
+**Before any grep/sed on document.xml, ask:** does map.json, tree_data.json, or get_schema.py output already answer this? If yes, stop.
+
+### The get_schema.py seal
+
+Before writing `get_schema.py`, produce a **schema inventory**: walk every insert operation in the plan and list each XML row/table type that edit_script.py will INSERT. Write get_schema.py to extract one live example of each. Run it. Compare output against the inventory. If anything is missing → fix get_schema.py and re-run.
+
+**After get_schema.py succeeds: document.xml is sealed.** Schema gap found while writing edit_script.py → fix get_schema.py and re-run. No shell access to document.xml.
+
+Example inventory table:
+
+| Insert operation | XML structure needed | In get_schema.py? |
+|---|---|---|
+| New impact table row | `w:tr` (3-col pct table) | ✓/✗ |
+| New injury detail row | `w:tr` (4-col pct table) | ✓/✗ |
+| New Section 4 data row | `w:tr` (10-col dxa table) | ✓/✗ |
+| New mini-table (tree entry) | Full `w:tbl` + data `w:tr` | ✓/✗ |
+| New narrative paragraph | `ins_para()` — no extract needed | — |
 
 ## Verification and Logging
 

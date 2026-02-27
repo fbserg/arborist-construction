@@ -18,11 +18,14 @@ Detailed reference for making tracked-change edits to `.docx` files. Load this b
 import sys
 sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
 from edit_helpers import EditSession, insert_xml_after, RPR_NORMAL, RPR_BOLD
+# Builder functions for table rows/mini-tables (import only what the script needs):
+from edit_helpers import tc, impact_row, injury_row, sec4_row, mini_table, injury_detail_table
 
 # EditSession handles encoding, document loading, and auto-incrementing change IDs.
 # start_id auto-detects from existing tracked changes (max existing ID + 1).
 # Override with start_id=N if needed (check changelog for last used ID).
-s = EditSession("work/[Client]/.work", "2026-02-25", "Arborist")
+# rsid: record the RSID from unpack output — used as w:rsidR on new runs/rows.
+s = EditSession("work/[Client]/.work", "2026-02-25", "Arborist", rsid="00AB12CD")
 
 # Find and replace text (auto del+ins, auto rPr extraction):
 node = s.find_run("old text", 4455, 4465)
@@ -44,6 +47,24 @@ insert_xml_after(s.dom, para,
 
 # Generate del/ins XML directly (for complex cases):
 xml = s.del_run("old") + s.ins_run("new", RPR_BOLD)
+
+# ── Builder functions (for insert-heavy edits) ──
+
+# Impact table row (3-col):
+anchor_tr = s.find_tr("16321D29")
+insert_xml_after(s.dom, anchor_tr, impact_row(s, 5, "Removal — condition-based", "Removal"))
+
+# Injury detail row (4-col):
+insert_xml_after(s.dom, anchor_tr, injury_row(s, "Front walkway", "3.1m", '4"', "Moderate"))
+
+# Section 4 data row (10-col):
+insert_xml_after(s.dom, anchor_tr, sec4_row(s, ["15", "Silver Maple", "Acer saccharinum", "22", "Good", "", "Private", "Injury", "4.4", "Yes"]))
+
+# Mini-table (floating 8-col tree summary — tblpX/tblpY from get_schema.py):
+insert_xml_after(s.dom, para, mini_table(s, 15, "Silver Maple", 22, "Good", "Good health", "Private", "Injury", 4.4, tblpX="1513", tblpY="2322"))
+
+# Injury detail table (header + rows):
+insert_xml_after(s.dom, para, injury_detail_table(s, [("Front driveway", "2.1m", '4"', "Moderate")]))
 
 s.save()  # Prints IDs used range
 ```
