@@ -94,10 +94,30 @@ python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/extract_t
 ```
 Outputs `[project]/.work/tree_data.json` — read this instead of re-reading the full document for tree species, DBH, TPZ, condition, etc.
 
+**Step 1c — Map report structure** (replaces manual grepping for paraIds and table schemas):
+```bash
+python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/map_report.py" "[project]/.work"
+```
+Outputs heading list, tree sections with paraIds + line numbers + previews, table column schemas, and summary paragraphs. JSON saved to `[project]/.work/map.json` — reference it when writing the edit script instead of grepping `document.xml` by hand.
+
+**Step 1d — Schema inventory** (required before any insert-heavy edit):
+
+Walk every insert operation in the plan and build a table:
+
+| Insert operation | XML structure needed | In get_schema.py? |
+|---|---|---|
+| New table row (any table) | `w:tr` from that specific table | ✓/✗ |
+| New floating mini-table (tree entry) | Full `w:tbl` + data `w:tr` | ✓/✗ |
+| New narrative paragraph | `ins_para()` helper — no extract needed | — |
+
+Write `get_schema.py` to extract one live example of every ✗ row. Run it. Verify output covers the full inventory. Fix and re-run until all ✗ become ✓.
+
+**After get_schema.py succeeds: document.xml is sealed.** Any schema gap found while writing edit_script.py → fix get_schema.py and re-run. Never use sed/grep on document.xml for schema discovery after this point.
+
 **Step 2 — Discover scope** before writing the script:
-- Pandoc-read or grep the document to confirm table column names — do not assume schema from templates.
-- For each target narrative paragraph: grep `document.xml` for the `w14:paraId` and note its first ~10 actual words. Use paraIds as anchors in the script (`s.find_para("XXXXXXXX")`), not template labels.
-- Confirm every target cell/paragraph actually exists before finalizing what to change.
+- Use `map.json` (from Step 1c) for paraIds, table schemas, and section structure — do not assume schema from templates.
+- For each target narrative paragraph: read the paraId and preview from the map output. Confirm the paragraph exists and note its first ~10 words before finalizing what to change.
+- Cross-check: confirm every target cell/paragraph actually exists.
 
 **Step 3 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
 
@@ -115,7 +135,7 @@ python3 "[project]/.work/edit_script.py"
 - **Minimal edits**: Only wrap changed text in `<w:del>`/`<w:ins>` tags.
 - **Preserve formatting**: Extract and reuse `<w:rPr>` from original nodes.
 - **Batch changes**: Group 3-10 related edits per script.
-- **Grep first**: Always check `word/document.xml` line numbers before editing.
+- **Never grep document.xml**: Use map.json for paraIds/structure, get_schema.py for row schemas, runtime helpers (`find_run`, `find_para`) for everything else. Shell commands on document.xml are always wrong.
 - **paraId anchoring**: For narrative paragraphs, prefer `s.find_para("XXXXXXXX")` over line-range text matching — paraIds are stable across content changes. Grep the XML for `w14:paraId` during the discovery step.
 - **Surgical phrase edits**: For small phrase changes (≤3 words) within long paragraphs, use `s.replace_phrase_in_run(run, phrase, replacement)` instead of `replace_text()` — it marks only the changed words as del/ins.
 - **Section 5 edits**: Load `reference/section5-layout.md` before editing the conclusion section.
