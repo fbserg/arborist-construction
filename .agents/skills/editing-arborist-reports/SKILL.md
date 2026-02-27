@@ -84,8 +84,6 @@ pandoc "path/to/document.docx" -t markdown     # or -o "[project]/[Name].md" to 
 
 ## Editing a Report (Tracked Changes)
 
-**Before editing:** Load `reference/editing-tracked-changes.md` for the script template, helper functions, and XML patterns.
-
 **Step 1 — Unpack:**
 ```bash
 cd "$SKILL_OFFICE" && python3 unpack.py "$PROJECT_ROOT/[project]/[Name].docx" "$PROJECT_ROOT/[project]/.work/unpacked/temp"
@@ -121,11 +119,18 @@ python3 "$PROJECT_ROOT/.agents/skills/editing-arborist-reports/scripts/map_repor
 ```
 Outputs to `[project]/.work/map.json`:
 - Heading list with paraIds + line numbers
-- Tables with **cell-level data**: each row has `row_para_id` and per-cell `{para_id, text, col_name}` — use these for `find_para()` calls instead of grepping `document.xml`
+- Tables with **cell-level data**: each row has `row_para_id` and per-cell `{col, text, para_id}`. Column names are in `table['columns'][N]`. Use cell `para_id` for `find_para()` calls instead of grepping `document.xml`
 - Tree sections with paraIds + line numbers + previews
 - Summary paragraphs
 - **Permit bullets**: Section 5 permit count paragraphs with paraIds (e.g. "Removal Permit requirement: 6 trees")
 - **Section paragraphs** (`section_paras`): all paragraphs under each Heading1, keyed by heading paraId. Includes paraId, text preview, and line number. Tables appear as `{type: "table"}`. Eliminates manual DOM walks for Section 5, Addendum 0, etc.
+
+**Query mode** — load a slice of existing map.json without re-parsing XML:
+```bash
+python3 map_report.py "[project]/.work" query --table 4 --row 1   # single row with columns
+python3 map_report.py "[project]/.work" query --section "Section 5" # heading + paragraphs
+python3 map_report.py "[project]/.work" query --permits             # permit bullets only
+```
 
 **Step 1d — Extract schema** (required before any insert-heavy edit):
 ```bash
@@ -149,16 +154,111 @@ Reads `map.json` + `document.xml`. Outputs `[project]/.work/schema.json` with:
 - For each target narrative paragraph: read the paraId and preview from the map output.
 - Cross-check: confirm every target cell/paragraph actually exists.
 
-**Step 3 — Create edit script** in `[project]/.work/edit_script.py` using the template from `reference/editing-tracked-changes.md`. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
+**Step 3 — Create edit script** in `[project]/.work/edit_script.py` using the template below. If editing narrative content, also load `$PROJECT_ROOT/guideline.md`.
 
-**Required in every edit script:** call `s.validate_targets()` before any mutations:
+### Edit Script Template
+
 ```python
-s.validate_targets([
-    ("65486C2D", "w:p", "Sec4 tree 2 direction cell"),
-    ("5EC182F9", "w:tr", "Impact table row for trees 2,3"),
-    # ... all paraIds the script will target
-])
+import sys
+sys.path.insert(0, "/home/serg/projects/arborist-construction/.agents/skills/editing-arborist-reports/scripts")
+from edit_helpers import (EditSession, insert_xml_after, replace_node_with_xml, get_text,
+                          prev_element_sibling, next_element_sibling, extract_rpr,
+                          RPR_NORMAL, RPR_BOLD)
+# Builder functions for table rows/mini-tables (import only what the script needs):
+from edit_helpers import tc, impact_row, injury_row, sec4_row, mini_table, injury_detail_table
+
+# rsid: use python3 -c "import secrets; print(secrets.token_hex(4).upper())" to generate.
+# start_id auto-detects from existing tracked changes (max existing ID + 1).
+# Auto-backup: document.xml is backed up on init; auto-rollback on exception via context manager.
+with EditSession("work/[Client]/.work", "2026-02-27", "Arborist", rsid="00AB12CD") as s:
+    s.load_schema()
+    # s.rpr['mini_data'], s.rpr['mini_hdr'], s.rpr['impact_data'], etc.
+
+    # Pre-flight validation — catches paraId type confusion before any mutations:
+    s.validate_targets([
+        ("65486C2D", "w:p", "Sec4 tree 2 direction cell"),
+        ("5EC182F9", "w:tr", "Impact table row for trees 2,3"),
+    ])
+
+    # ── Find-and-replace in a paragraph cell (one-liner) ──
+    s.replace_in_para(s.find_para("65486C2D"), "Remove", "Injury")
+
+    # ── Surgical phrase replacement (marks only changed words — use for ≤3 word changes) ──
+    node = s.find_run("The tree in question is significant", 1200, 1220)
+    s.replace_phrase_in_run(node, "tree in question", "subject tree")
+
+    # ── Track-delete all runs in a paragraph ──
+    s.delete_para(s.find_para("2F097DE3"))
+
+    # ── Track-delete an entire table row ──
+    s.delete_row(s.find_tr("67C88484"))
+
+    # ── Insert paragraphs after a reference node ──
+    para = s.find_para("60180DE4")
+    insert_xml_after(s.dom, para,
+        s.ins_para("Paragraph 1 text.") +
+        s.ins_para("Paragraph 2 text.")
+    )
+
+    # ── Builder functions (for insert-heavy edits) ──
+    # All builders accept optional rpr= to override hardcoded RPR_ constants.
+    # IMPORTANT: Use s.rpr['...'] from load_schema() — hardcoded constants may not match.
+
+    # Impact table row (3-col):
+    anchor_tr = s.find_tr("16321D29")
+    insert_xml_after(s.dom, anchor_tr, impact_row(s, 5, "Removal — condition-based", "Removal"))
+
+    # Injury detail row (4-col):
+    insert_xml_after(s.dom, anchor_tr, injury_row(s, "Front walkway", "3.1m", '4"', "Moderate"))
+
+    # Section 4 data row (10-col):
+    insert_xml_after(s.dom, anchor_tr, sec4_row(s, ["15", "Silver Maple", "Acer saccharinum", "22", "Good", "", "Private", "Injury", "4.4", "Yes"], rpr=s.rpr.get('sec4_data')))
+
+    # Mini-table (floating 8-col tree summary — tblpX/tblpY from schema.json):
+    insert_xml_after(s.dom, para, mini_table(s, 15, "Silver Maple", 22, "Good", "Good health", "Private", "Injury", 4.4, tblpX="1513", tblpY="2322", hdr_rpr=s.rpr.get('mini_hdr'), data_rpr=s.rpr.get('mini_data')))
+
+    # Injury detail table (header + rows — tblpX/tblpY for floating):
+    insert_xml_after(s.dom, para, injury_detail_table(s, [("Front driveway", "2.1m", '4"', "Moderate")], tblpX="1513", tblpY="5500"))
+
+    # Column widths: schema['tables']['removal']['column_widths'] instead of hardcoding.
+
+    s.save()
+# If exception occurs before save(), context manager auto-rolls back document.xml
 ```
+
+**Standalone helpers** also importable without EditSession:
+`from edit_helpers import load_document, get_text, find_run_in_line_range, find_para_by_para_id, insert_xml_after, replace_node_with_xml, prev_element_sibling, next_element_sibling, extract_rpr`
+
+### Helper Quick Reference
+
+| Need | Method |
+|---|---|
+| Replace run text (full match) | `s.replace_text(node, old, new)` |
+| Replace first matching run in paragraph | `s.replace_in_para(para, old, new)` |
+| Surgical phrase change (≤3 words) | `s.replace_phrase_in_run(run, phrase, new)` |
+| Track-delete paragraph content | `s.delete_para(para)` |
+| Track-delete table row | `s.delete_row(tr)` |
+| Navigate siblings | `prev_element_sibling(node)` / `next_element_sibling(node)` |
+| Date without time | `s.date_short` (returns "2026-02-25") |
+| Generate insert paragraph | `s.ins_para(text)` |
+| Generate del/ins XML | `s.del_run(text)` / `s.ins_run(text)` |
+| Load schema + rpr | `s.load_schema()` → `s.rpr['mini_data']` etc. |
+
+### Critical: `<w:ins>` Wrapping
+
+**EditSession methods** (`del_run`, `ins_run`, `replace_text`, `ins_para`) auto-create `<w:ins>`/`<w:del>` wrappers with correct IDs.
+
+**Manual XML** (for complex cases like table cells) still requires explicit wrapping:
+```xml
+<!-- WRONG — will not show as tracked change -->
+<w:r><w:rPr>...</w:rPr><w:t>new text</w:t></w:r>
+
+<!-- CORRECT — will show as tracked insertion -->
+<w:ins w:id="30" w:author="Arborist" w:date="2026-02-24T00:00:00Z">
+  <w:r><w:rPr>...</w:rPr><w:t>new text</w:t></w:r>
+</w:ins>
+```
+
 This catches paraId type confusion (w:tr vs w:p) before any edits are made. If a target is missing, the script fails cleanly with no partial changes (auto-backup restores document.xml).
 
 **Step 4 — Run:**
@@ -176,7 +276,17 @@ python3 "[project]/.work/edit_script.py"
 - **Preserve formatting**: Extract and reuse `<w:rPr>` from original nodes.
 - **Batch changes**: Group 3-10 related edits per script.
 - **Surgical phrase edits**: For small phrase changes (≤3 words) within long paragraphs, use `s.replace_phrase_in_run(run, phrase, replacement)` instead of `replace_text()` — it marks only the changed words as del/ins.
-- **Section 5 edits**: Load `reference/section5-layout.md` before editing the conclusion section.
+- **Section 5 structure order** (do not reorder or skip):
+  1. Permit summary bullets
+  2. Protection note (standard paragraph)
+  3. "No other trees" note (standard paragraph)
+  4. Impact summary table (Tree #, Source of impact, Direction)
+  5. "Injuries" subheading — per injured tree: mini data table → injury detail table → narrative paragraphs (per guideline.md Template 1). RSE boilerplate follows all injury narratives.
+  6. "Removals" subheading — per removed tree: narrative per Template 2 or 3
+  7. "General Notes" — standard closing
+  8. Signature block
+  - Injury narratives go **after** the injury detail table, **before** the RSE boilerplate.
+  - If mini data table is absent for Tree 1, create it as tracked insertion before the injury detail table.
 - **Boilerplate paragraphs — do not edit**: These Section 5 paragraphs are standard text that applies regardless of tree count or type. Never modify them when adding/editing trees:
   - "All bylaw protected trees not slated for removal or injury are to be protected by fencing..."
   - "No other municipally owned trees of any size, private trees, or neighbouring trees..."
@@ -193,7 +303,7 @@ The only thing that reads document.xml is Python code (`load_document()` in edit
 
 | Need | Tool |
 |---|---|
-| ParaId exists? | `map.json` (cell-level paraIds in `rows[N].cells[M].para_id`) |
+| ParaId exists? | `map.json` (cell paraIds in `rows[N].cells[M].para_id`, col names in `columns[N]`) |
 | Section structure? | `map.json` headings list (absence of a heading IS the answer) |
 | Permit bullet paraIds? | `map.json` `permit_bullets` section |
 | Live rPr for builders? | `schema.json` (from standard `get_schema.py`) |
@@ -271,11 +381,9 @@ Always unpack from the source docx (in `work/[Client]/` or `new/`), not from the
 
 ## Reference Files
 
-**Load only the reference required for the current task. Do not read all references upfront.**
+The edit script template, helper reference, and Section 5 layout are inlined above — no extra file loads needed.
 
 | Reference | Load when... |
 |---|---|
 | `$PROJECT_ROOT/guideline.md` | Writing or editing narrative content (impact profiles, templates, tone rules) |
-| `reference/editing-tracked-changes.md` | Making tracked-change edits to any document |
-| `reference/section5-layout.md` | Editing the conclusion section (Section 5) |
 | `reference/exploring-sample-reports.md` | Needing to check formatting against sample reports |

@@ -8,7 +8,7 @@ Usage:
     from edit_helpers import RPR_NORMAL, RPR_BOLD
 """
 
-import sys, os, shutil, xml.dom.minidom as minidom
+import sys, os, json, shutil, xml.dom.minidom as minidom
 
 # ─── Encoding setup ──────────────────────────────────────────────────────────
 
@@ -236,6 +236,13 @@ class EditSession:
     def date_short(self):
         """Date without time component, e.g. '2026-02-25'."""
         return self.date.split("T")[0]
+
+    def load_schema(self):
+        """Load schema.json and populate self.schema and self.rpr."""
+        with open(os.path.join(self._work_path, 'schema.json')) as f:
+            self.schema = json.load(f)
+        self.rpr = self.schema.get('rpr', {})
+        return self.schema
 
     def generate_para_id(self, prefix, suffix=""):
         """Generate a paraId with collision detection.

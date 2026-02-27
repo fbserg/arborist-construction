@@ -16,7 +16,7 @@ Content rules (impact profiles, narrative templates, tone constraints) live in `
 
 This repo is pushed to GitHub. **Only guidelines, documentation, and skill definitions are tracked.** All binary/work files live on disk but are gitignored.
 
-**Tracked:** `CLAUDE.md`, `guideline.md`, `.agents/`, `.gitignore`
+**Tracked:** `CLAUDE.md`, `SETUP.md`, `guideline.md`, `.agents/`, `.gitignore`
 **Ignored:** `*.docx`, `*.xlsx`, `*.ai`, `*.pdf`, `*.emf`, `new/`, `work/`, `complete/`, `.claude/`
 
 Folder convention: `new/` (incoming) → `work/[Client]/` (active, with `.work/` artifacts) → `complete/` (delivered)
@@ -29,8 +29,8 @@ Folder convention: `new/` (incoming) → `work/[Client]/` (active, with `.work/`
 
 ## Environment
 
-Claude Code runs in WSL. Project root: `/home/serg/projects/arborist-construction`.
-All docx tooling runs in WSL using `python3` and `pandoc` directly.
+Current environment is WSL. Project root: `/home/serg/projects/arborist-construction`.
+All docx tooling uses `python3` and `pandoc` directly. See `SETUP.md` for cross-platform setup (macOS, Linux).
 
 Docx plugin location: `~/.claude/plugins/cache/anthropic-agent-skills/document-skills/<hash>/skills/docx/`
 Current hash: `1ed29a03dc85`

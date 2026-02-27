@@ -115,8 +115,6 @@ def _extract_tables(body, tbl_lines, headings):
                 cell_pid = paras[0].getAttribute('w14:paraId') if paras else None
                 cell_text = get_text(cell).strip()
                 entry = {'col': ci, 'text': cell_text[:60], 'para_id': cell_pid}
-                if ci < len(cols):
-                    entry['col_name'] = cols[ci]
                 cell_data.append(entry)
             row_data.append({'row_index': ri, 'row_para_id': row_pid, 'cells': cell_data})
         tables.append({
@@ -247,7 +245,9 @@ def _extract_section_paras(body, headings, line_idx):
                 continue
             pid = node.getAttribute('w14:paraId')
             text = get_text(node).strip()
-            paras.append({'para_id': pid, 'text': text[:80], 'line': line_idx.get(pid)})
+            if not text:
+                continue
+            paras.append({'para_id': pid, 'text': text[:40], 'line': line_idx.get(pid)})
         sections[h['para_id']] = paras
     return sections
 
@@ -329,9 +329,9 @@ def _print_map(result):
         print(f"    Columns: {t['columns']}")
         if t.get('rows'):
             for row in t['rows'][:2]:  # show header + first data row
-                cells_preview = [(c['col_name'], c['text'][:15], c['para_id']) for c in row['cells'] if 'col_name' in c]
+                cells_preview = [(t['columns'][c['col']] if c['col'] < len(t['columns']) else f"col{c['col']}", c['text'][:15]) for c in row['cells']]
                 if cells_preview:
-                    print(f"    Row {row['row_index']} [{row['row_para_id']}]: {[(n, t) for n, t, _ in cells_preview[:4]]}...")
+                    print(f"    Row {row['row_index']} [{row['row_para_id']}]: {cells_preview[:4]}...")
             if t['row_count'] > 2:
                 print(f"    ... ({t['row_count'] - 2} more data rows)")
     print("\n── TREE SECTIONS ──")
@@ -353,13 +353,61 @@ def _print_map(result):
             print(f"    [{p['para_id']}]  L{p['line_lo']}-{p['line_hi']}  {p['preview']}")
 
 
+def _query(work_path, args):
+    """Query mode: load existing map.json and return a slice."""
+    if not os.path.isabs(work_path):
+        work_path = os.path.join(PROJECT_ROOT, work_path)
+    map_path = os.path.join(work_path, 'map.json')
+    with open(map_path, encoding='utf-8') as f:
+        data = json.load(f)
+
+    if '--table' in args:
+        idx = int(args[args.index('--table') + 1])
+        tables = [t for t in data['tables'] if t['table_index'] == idx]
+        if not tables:
+            print(json.dumps({"error": f"table {idx} not found"}))
+            return
+        tbl = tables[0]
+        if '--row' in args:
+            ri = int(args[args.index('--row') + 1])
+            rows = [r for r in tbl['rows'] if r['row_index'] == ri]
+            print(json.dumps({"table": idx, "columns": tbl['columns'], "row": rows[0] if rows else None}, indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(tbl, indent=2, ensure_ascii=False))
+
+    elif '--section' in args:
+        heading_text = args[args.index('--section') + 1]
+        # Find the heading whose text contains the query (case-insensitive)
+        match = None
+        for h in data['headings']:
+            if heading_text.lower() in h['text'].lower():
+                match = h
+                break
+        if not match:
+            print(json.dumps({"error": f"no heading matching '{heading_text}'"}))
+            return
+        paras = data.get('section_paras', {}).get(match['para_id'], [])
+        print(json.dumps({"heading": match, "paragraphs": paras}, indent=2, ensure_ascii=False))
+
+    elif '--permits' in args:
+        print(json.dumps(data.get('permit_bullets', []), indent=2, ensure_ascii=False))
+
+    else:
+        print("Query usage: map_report.py <work_path> query --table N [--row R] | --section TEXT | --permits", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <work_path>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <work_path> [query --table N [--row R] | --section TEXT | --permits]", file=sys.stderr)
         sys.exit(1)
-    result = map_report(sys.argv[1])
-    _print_map(result)
-    print(f"\nJSON: {result['source_path'].replace('/unpacked/', '/map.json ← ')}")
+    work_path = sys.argv[1]
+    if len(sys.argv) > 2 and sys.argv[2] == 'query':
+        _query(work_path, sys.argv[3:])
+    else:
+        result = map_report(work_path)
+        _print_map(result)
+        print(f"\nJSON: {result['source_path'].replace('/unpacked/', '/map.json ← ')}")
 
 
 if __name__ == '__main__':
